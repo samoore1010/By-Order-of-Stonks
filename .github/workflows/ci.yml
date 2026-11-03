@@ -6,7 +6,9 @@ permissions:
   contents: read
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # Pin a supported Playwright host instead of following ubuntu-latest upgrades.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -15,6 +17,6 @@ jobs:
           cache: pip
       - run: pip install -r requirements-dev.txt
       - run: python -m pytest -q
+      - run: node --check frontend/app.js
       - run: python -m playwright install --with-deps chromium
       - run: python tests/browser_smoke.py
-      - run: node --check frontend/app.js
