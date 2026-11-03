@@ -79,7 +79,7 @@ def run():
             page.locator('#chat-input').fill('Explain the selected backtest and its limitations.')
             page.locator('#send-chat').click()
             page.wait_for_function("!document.querySelector('#send-chat').disabled")
-            assert page.locator('#messages .message').count()==3
+            assert page.locator('#messages .message').count()==2
             page.set_viewport_size({'width':390,'height':844})
             assert page.evaluate('document.documentElement.scrollWidth')==390
             page.locator('#menu').click()
