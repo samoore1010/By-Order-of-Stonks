@@ -126,9 +126,28 @@ class Desk:
             raise ValueError("Research report not found")
         return value
 
+    def reserve_model_call(self, purpose: str) -> bool:
+        """Share the existing application LLM call budget; count failed requests too."""
+        try:
+            limit = max(0, min(200, int(os.getenv("OPENAI_MAX_CALLS_PER_DAY", "40"))))
+        except ValueError:
+            limit = 0
+        today = datetime.now(timezone.utc).date().isoformat()
+        used = sum(x.get("created_at", "").startswith(today)
+                   for x in self.s.store.list("model_call", 10000))
+        if used >= limit:
+            return False
+        self.s.store.write("model_call", {
+            "status": "reserved", "model": os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
+            "source": "research_desk", "purpose": purpose,
+        })
+        return True
+
     async def model_plan(self, question: str, fallback: dict) -> dict:
         if not os.getenv("OPENAI_API_KEY") or os.getenv("DESK_MODEL_PLANNING", "true") != "true":
             return fallback
+        if not self.reserve_model_call("research_planning"):
+            return {**fallback, "reason": "LLM budget exhausted; deterministic planning used instead."}
         # This is only task planning. Numeric outputs and market IDs are never trusted.
         directive = (
             "Interpret a user question about real prediction-market research. "
@@ -176,6 +195,9 @@ class Desk:
                     "note": "Connect a model provider to enable external-source research."}
         if os.getenv("DESK_WEB_RESEARCH", "true") != "true":
             return {"status": "disabled", "sources": [], "text": ""}
+        if not self.reserve_model_call("public_web_context"):
+            return {"status": "budget_exhausted", "sources": [], "text": "",
+                    "note": "Model-call budget exhausted. No web research attempted."}
         async with httpx.AsyncClient(timeout=35) as client:
             try:
                 response = await client.post("https://api.openai.com/v1/responses",
@@ -453,6 +475,9 @@ class Desk:
         if not os.getenv("OPENAI_API_KEY"):
             return {"mode": "evidence", "text": report["conclusion"] + " " +
                     " ".join(report["limitations"][:2]),
+                    "report_id": report["id"]}
+        if not self.reserve_model_call("report_interpretation"):
+            return {"mode": "evidence", "text": report["conclusion"] + " Model-call budget exhausted.",
                     "report_id": report["id"]}
         payload = {
             "question": report["question"],
