@@ -15,6 +15,8 @@ Intent = Literal["trade_construction", "comparative_backtest",
                  "market_investigation", "event_analysis"]
 DAY_NAMES = {"monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3,
              "friday": 4, "saturday": 5, "sunday": 6}
+NUMBER_NAMES = {"two":2,"three":3,"four":4,"five":5,"six":6,
+                "seven":7,"eight":8,"nine":9,"ten":10,"eleven":11,"twelve":12}
 # Market-type concepts, not NFL-specific strategies. These map to actual
 # series/contract metadata labels used by the historical comparison engine.
 COMPARISON_ALIASES = {
@@ -111,8 +113,12 @@ def classify(question: str, current: datetime | None = None) -> ResearchPlan:
                       "market_investigation")
     leg_matches = list(re.finditer(r"\b(\d{1,2})[\s-]*(?:legs?|selections?)\b", q))
     leg_matches += list(re.finditer(r"\b(?:legs?|selections?)\s*(?:of|:)?\s*(\d{1,2})\b", q))
+    word_legs=list(re.finditer(r"\b(two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)[\s-]+(?:legs?|selections?)\b",q))
     legs = max(leg_matches, key=lambda m:m.start()) if leg_matches else None
-    nlegs = int(legs.group(1)) if legs else None
+    word_leg = word_legs[-1] if word_legs else None
+    nlegs = (NUMBER_NAMES[word_leg.group(1)] if word_leg and
+             (not legs or word_leg.start()>legs.start()) else
+             int(legs.group(1)) if legs else None)
     if nlegs is not None and not 2 <= nlegs <= 12:
         raise ValueError("Supported trade construction requires between 2 and 12 legs")
     # Explicit ranges only. Never convert an unrequested probability to an edge.
@@ -121,7 +127,11 @@ def classify(question: str, current: datetime | None = None) -> ResearchPlan:
     low, high = ((float(pb.group(1))/100, float(pb.group(2))/100) if pb else (None, None))
     looks = list(re.finditer(r"(?:last|past|previous|prior|most recent)\s+(\d{1,2})\s+(?:games?|matches?|events?)", q))
     look = looks[-1] if looks else None
-    lookback = int(look.group(1)) if look else None
+    word_looks=list(re.finditer(r"(?:last|past|previous|prior|most recent)\s+(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+(?:games?|matches?|events?)",q))
+    word_look=word_looks[-1] if word_looks else None
+    lookback = (({**NUMBER_NAMES,'one':1})[word_look.group(1)] if word_look and
+                (not look or word_look.start()>look.start()) else
+                int(look.group(1)) if look else None)
     day, at = _target_date(text, current)
     ticker = re.search(r"\b(?:ticker|contract)\s*[:=]\s*([A-Z0-9.-]{3,160})\b", text)
     league = "NFL" if re.search(r"\bNFL\b|thursday night football", text, re.I) else None
