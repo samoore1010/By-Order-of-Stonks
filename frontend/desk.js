@@ -139,11 +139,25 @@ function capabilityReport(r){
           '</td><td><code>'+esc(x.ticker)+'</code></td><td>'+
           esc(x.last_games?.status==="verified"?"Historical data present":"Incomplete logs")+'</td></tr>')):
         none("No fully verified player-prop contracts","Without verified event-linked Kalshi markets, the system cannot claim that candidate trade legs exist."));
-    html+=panel("Combination probability and execution","No speculative combination or implied execution.",
-      '<div class="metric-row">'+metric("Validated joint probability","Not available","No calibrated multivariate model")+
-      metric("Requested combination",requested?requested+" legs":"Unspecified","NOT constructed or approved")+
-      metric("Exchange quote","Unavailable","Native Kalshi RFQ not configured")+'</div>'+
-      '<p>Multiplying separate player frequencies would assume independence and cannot certify the requested joint probability. Kalshi native combination quotation requires an explicitly supported RFQ flow.</p>');
+    const structure=tr.proposed_legs||[];
+    html+=panel("Provisional trade structure",
+      "These are evidence-backed research candidates, NOT approved or executable trade legs.",
+      structure.length?table(["Player / condition","Observed recent frequency","Kalshi contract"],
+        structure.map(x=>'<tr><td><strong>'+esc(x.player)+'</strong><small>'+
+          esc(x.stat?.source_text||"")+'</small></td><td>'+pct(x.last_games?.observed_frequency)+
+          ' (descriptive, not predictive)</td><td><code>'+esc(x.ticker)+'</code></td></tr>')):
+        none("No verified leg structure","The exchange and statistical evidence were insufficient to select the requested number of legs."));
+    html+=panel("Joint probability and execution",
+      "A calculated scenario is not a calibrated forecast or an executable Kalshi combination.",
+      '<div class="metric-row">'+metric("Verified joint probability","Unavailable","A calibrated multivariate model is required")+
+      metric("Provisional legs",String(structure.length),"No real-money trade prepared")+
+      metric("Native Kalshi quote","Unavailable","RFQ integration not implemented")+'</div>'+
+      (tr.independence_scenario!=null?
+        '<div class="notice warning"><strong>Uncalibrated illustrative scenario only:</strong> '+
+        pct(tr.independence_scenario)+' under independence. Illustrative Frechet bounds: '+
+        pct(tr.frechet_scenario?.[0])+' to '+pct(tr.frechet_scenario?.[1])+'. '+
+        'These are not actual joint event probabilities or guaranteed quoted odds.</div>':'')+
+      '<p>'+esc(tr.scenario_warning||"No defensible combined outcome probability can be calculated from current evidence.")+'</p>');
   }
   html+=requirementsView(r);
   if(r.external?.text){
