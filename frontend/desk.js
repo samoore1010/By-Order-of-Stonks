@@ -124,20 +124,20 @@ function capabilityReport(r){
       '<a href="'+esc(safe(event.source))+'" target="_blank" rel="noopener noreferrer">Original event source</a></div>':
       none("Event not verified","An authoritative, uniquely linked event identifier could not be established. Topic matches alone do not prove event identity."));
   if(r.task_type==="trade_construction"){
-    html+=panel("Game-log evidence","Counts reflect actual completed games retrieved before the verified kickoff, not implied future win probabilities.",
+    if(constraints.lookback_games!=null||constraints.market_filter==="player_prop")html+=panel("Game-log evidence","Counts reflect actual completed games retrieved before the verified kickoff, not implied future win probabilities.",
       logs.length?table(["Team","Requested","Verified","Provider"],
         logs.map(x=>'<tr><td><strong>'+esc(x.team)+'</strong></td><td>'+
           num(x.games_requested)+'</td><td>'+num(x.games_verified)+'</td><td>'+
           (x.source?'<a href="'+esc(safe(x.source))+'" target="_blank" rel="noopener noreferrer">Data source</a>':"Unavailable")+'</td></tr>')):
         none("No game logs verified","The event or source player statistics were unavailable."));
     html+=panel("Potential contract candidates","An identified contract is NOT an endorsed trade leg. No unverified prop is added.",
-      candidates.length?table(["Verified player / market","Historical prop results","Current contract","Research status"],
-        candidates.map(x=>'<tr><td><strong>'+esc(x.player)+'</strong><small>'+
+      candidates.length?table(["Market / player","Research evidence","Verified exchange ticker","Status"],
+        candidates.map(x=>'<tr><td><strong>'+esc(x.player||x.title||x.ticker)+'</strong><small>'+
           esc(x.stat?.source_text||"")+'</small></td><td>'+
-          num(x.last_games?.observed_games)+' / '+num(x.last_games?.requested_games)+' games'+
+          (x.last_games?num(x.last_games.observed_games)+' / '+num(x.last_games.requested_games)+' games':'No player model available')+
           (x.last_games?.observed_frequency!=null?'<small>Past-game frequency '+pct(x.last_games.observed_frequency)+' (not calibrated)</small>':"")+
           '</td><td><code>'+esc(x.ticker)+'</code></td><td>'+
-          esc(x.last_games?.status==="verified"?"Historical data present":"Incomplete logs")+'</td></tr>')):
+          esc(x.relation_status==="provisional"?"Provisional event match":x.last_games?.status==="verified"?"Player statistics retrieved":"Exchange contract only")+'</td></tr>')):
         none("No fully verified player-prop contracts","Without verified event-linked Kalshi markets, the system cannot claim that candidate trade legs exist."));
     const structure=tr.proposed_legs||[];
     html+=panel("Provisional trade structure",
