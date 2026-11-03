@@ -47,17 +47,25 @@ def run():
                 page.locator(f'nav [data-id="{tab}"]').click()
                 assert page.locator('main h1').count()==1
             page.locator('nav [data-id="strategies"]').click()
+            page.locator('[data-action="preset-longshot"]').click()
+            assert 'unlikely YES outcomes' in page.locator('#strategy-form [name=name]').input_value()
             page.locator('#strategy-form [name=name]').fill('Browser-tested strategy')
             page.locator('#strategy-form [type=submit]').click()
             page.wait_for_selector('h3:has-text("Browser-tested strategy")')
             page.locator('nav [data-id="scanner"]').click()
+            # Explicitly opt into practice data; real Kalshi is now the default.
+            page.locator('#market-form [name="source"]').select_option('synthetic')
             page.locator('#market-form button').click()
             page.wait_for_selector('text=Phoenix high temperature above 100°F?')
+            page.locator('#market-filters [name="topic"]').select_option('Sports')
+            assert page.locator('#market-count').inner_text().startswith('2 matching markets')
+            page.locator('[data-action="clear-market-filters"]').click()
+            assert page.locator('#market-count').inner_text().startswith('6 matching markets')
             page.locator('[data-action=ticket][data-id="DEMO-1"]').click()
             page.wait_for_selector('#ticket-form')
             page.locator('#ticket-form [name=confirm]').check()
             page.locator('#ticket-form [type=submit]').click()
-            page.wait_for_selector('h1:has-text("Paper capital")')
+            page.wait_for_selector('h1:has-text("Monitor paper trades")')
             assert len(s.store.list('paper_order'))==1
             page.locator('nav [data-id="backtests"]').click()
             page.locator('#backtest-form [type=submit]').click()
@@ -71,7 +79,7 @@ def run():
             page.locator('#chat-input').fill('Explain the selected backtest and its limitations.')
             page.locator('#send-chat').click()
             page.wait_for_function("!document.querySelector('#send-chat').disabled")
-            assert page.locator('#messages .message').count()==3
+            assert page.locator('#messages .message').count()==2
             page.set_viewport_size({'width':390,'height':844})
             assert page.evaluate('document.documentElement.scrollWidth')==390
             page.locator('#menu').click()
