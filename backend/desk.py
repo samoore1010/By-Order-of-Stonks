@@ -29,6 +29,9 @@ class ResearchInput(Strict):
     days_before: int = Field(default=2, ge=1, le=30)
     max_markets: int = Field(default=60, ge=8, le=100)
     include_web: bool = True
+    min_yes_ask: float | None = Field(default=None, ge=0, le=1)
+    max_yes_ask: float | None = Field(default=None, ge=0, le=1)
+    min_observed_volume: float | None = Field(default=None, ge=0)
 
 
 class ConversationInput(Strict):
@@ -72,7 +75,9 @@ def plan_fallback(question: str, compare_by: str = "auto",
         ("Finance", ("bitcoin", "crypto", "stocks", "nasdaq")))
         if any(k in q for k in word)), "")
     return {"search_terms": words[:10], "category": category, "compare_by": group,
-            "trading_rule": rule, "analysis": "comparative historical calibration and execution-constrained simulations",
+            "trading_rule": rule,
+            "min_yes_ask": None, "max_yes_ask": None, "min_observed_volume": None,
+            "analysis": "comparative historical calibration and execution-constrained simulations",
             "method": "deterministic fallback",
             "reason": "A bounded interpretation of the natural-language request. Inspect selected series and coverage."}
 
@@ -155,7 +160,10 @@ class Desk:
             "Return ONLY a JSON object with keys: search_terms (array of 2-10 topical keywords/phrases), "
             "category (short optional category or empty string), compare_by (one of market_type/category/series), "
             "trading_rule (one of buy_yes, buy_no, against_longshots, buy_longshots, buy_favorites), "
-            "analysis (one sentence describing a measurable investigation). "
+            "analysis (one sentence describing a measurable investigation), "
+            "min_yes_ask (nullable number 0 to 1), max_yes_ask (nullable number 0 to 1), "
+            "min_observed_volume (nullable nonnegative number). "
+            "Use the numeric fields only when the user explicitly requests those constraints. "
             "Preserve broad domain coverage, and do not assume any particular sport or political event. "
             "Trade rules are illustrative baselines, not optimal strategies.")
         async with httpx.AsyncClient(timeout=25) as client:
@@ -182,6 +190,9 @@ class Desk:
                     "trading_rule": raw.get("trading_rule") if raw.get("trading_rule")
                     in MODELS else fallback["trading_rule"],
                     "analysis": str(raw.get("analysis") or fallback["analysis"])[:500],
+                    "min_yes_ask": raw.get("min_yes_ask") if isinstance(raw.get("min_yes_ask"), (float, int)) and 0 <= raw["min_yes_ask"] <= 1 else None,
+                    "max_yes_ask": raw.get("max_yes_ask") if isinstance(raw.get("max_yes_ask"), (float, int)) and 0 <= raw["max_yes_ask"] <= 1 else None,
+                    "min_observed_volume": raw.get("min_observed_volume") if isinstance(raw.get("min_observed_volume"), (float, int)) and 0 <= raw["min_observed_volume"] <= 10000000 else None,
                     "method": "model-assisted plan (verified against data by deterministic code)",
                     "reason": fallback["reason"],
                 }
@@ -253,6 +264,14 @@ class Desk:
             plan["compare_by"] = request.compare_by
         if request.trading_rule != "auto":
             plan["trading_rule"] = request.trading_rule
+        if request.min_yes_ask is not None:
+            plan["min_yes_ask"] = request.min_yes_ask
+        if request.max_yes_ask is not None:
+            plan["max_yes_ask"] = request.max_yes_ask
+        if request.min_observed_volume is not None:
+            plan["min_observed_volume"] = request.min_observed_volume
+        if plan["min_yes_ask"] is not None and plan["max_yes_ask"] is not None and plan["min_yes_ask"] > plan["max_yes_ask"]:
+            raise ValueError("Minimum YES price must be below maximum YES price")
         series_candidates = []
         seen = set()
         for term in plan["search_terms"][:10]:
@@ -316,7 +335,10 @@ class Desk:
         experiments = []
         for model in list(dict.fromkeys([plan["trading_rule"], "buy_yes", "buy_no", "against_longshots"])):
             experiments.append(study(available, model=model, compare_by=plan["compare_by"],
-                                     days_before=request.days_before))
+                                     days_before=request.days_before,
+                                     min_price=plan.get("min_yes_ask") if plan.get("min_yes_ask") is not None else 0,
+                                     max_price=plan.get("max_yes_ask") if plan.get("max_yes_ask") is not None else 1,
+                                     min_volume=plan.get("min_observed_volume") or 0))
         self.event(job_id, "Independent checks",
                    "Recording event sample counts, historical quote limitations, cost assumptions and coverage gaps.")
         max_valid = max((x.get("independent_event_ids", 0) for x in experiments), default=0)
