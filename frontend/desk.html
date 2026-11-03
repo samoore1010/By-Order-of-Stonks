@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0d1217">
+  <meta name="description" content="By Order of Stonks: prediction market research with evidence, historical testing and paper execution.">
+  <title>By Order of Stonks | Research Desk</title>
+  <link rel="stylesheet" href="/assets/desk.css">
+</head>
+<body>
+  <section id="sign-in" class="signin" hidden>
+    <form id="login-form" class="signin-card">
+      <div class="brand-glyph">B<span>/</span></div>
+      <div class="eyebrow">PRIVATE QUANTITATIVE RESEARCH</div>
+      <h1>By Order of Stonks</h1>
+      <p>Research real prediction markets, inspect the evidence, and simulate trades.</p>
+      <label for="password">Workspace password</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required>
+      <button class="btn primary" type="submit">Open research desk</button>
+      <p id="login-error" class="error"></p>
+    </form>
+  </section>
+  <div id="app" hidden>
+    <aside class="sidebar">
+      <a href="#explore" class="brand" data-nav="explore"><div class="brand-glyph">B<span>/</span></div><div>BY ORDER<br><strong>OF STONKS</strong></div></a>
+      <div class="sidebar-heading">RESEARCH DESK</div>
+      <nav id="primary-nav" aria-label="Primary">
+        <button data-nav="explore" class="nav active"><span class="nav-icon">◎</span><span>Explore<small>Find and investigate</small></span></button>
+        <button data-nav="research" class="nav"><span class="nav-icon">◈</span><span>Research<small>Evidence and backtests</small></span></button>
+        <button data-nav="trade" class="nav"><span class="nav-icon">⇄</span><span>Trade<small>Paper positions</small></span></button>
+      </nav>
+      <div class="side-bottom">
+        <div class="mode"><span class="indicator"></span><div><strong>Paper trading only</strong><small>Live exchange execution disabled</small></div></div>
+        <button id="logout" class="quiet">Sign out</button>
+        <a class="quiet" href="/legacy">Previous prototype</a>
+      </div>
+    </aside>
+    <div class="workspace">
+      <header class="topbar">
+        <button id="mobile-nav" class="icon-btn mobile-nav" aria-label="Toggle navigation">☰</button>
+        <span class="top-heading" id="page-label">Explore</span>
+        <div class="top-actions"><span id="source-health" class="top-status">Loading exchange status</span><button id="toggle-assistant" class="btn secondary">✧ Research assistant</button></div>
+      </header>
+      <main id="view" role="main" aria-live="polite"><div class="loading">Loading research desk…</div></main>
+      <footer>Real Kalshi data only. Estimates are not guaranteed fills or trading recommendations. <span id="worker-status"></span></footer>
+    </div>
+    <aside id="assistant" class="assistant" aria-label="Context-aware research assistant">
+      <header><div><strong>✧ Research assistant</strong><small>Ask a question. I'll find the data and show my work.</small></div><button id="close-assistant" class="icon-btn" aria-label="Close assistant">×</button></header>
+      <div id="thread" class="thread" aria-live="polite">
+        <article class="bubble bot">What would you like to investigate? I can identify markets, collect available historical records, run quantitative comparisons, and explain what the results actually support. I won't ask you to import contracts manually.</article>
+      </div>
+      <form id="assistant-form" class="assistant-form">
+        <label class="sr-only" for="assistant-input">Ask research assistant</label>
+        <textarea id="assistant-input" rows="3" maxlength="2000" placeholder="Ask about any event, strategy, or market…" required></textarea>
+        <div class="send-row"><small>Analysis first · orders always require approval</small><button class="btn primary" id="assistant-send" type="submit">Send ↗</button></div>
+      </form>
+    </aside>
+  </div>
+  <div id="toast" class="toast" role="status" hidden></div>
+  <script type="module" src="/assets/desk.js"></script>
+</body>
+</html>
