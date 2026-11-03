@@ -24,7 +24,12 @@ async def run():
             print("series returned:",len(data.get("series",[])))
             relevant=[x for x in data.get("series",[]) if any(t in str(x.get("title","")).lower() for t in ("football","nfl","passing yards","receiving yards"))]
             print("Potential football series:",[{k:x.get(k) for k in ("ticker","title","category")} for x in relevant[:16]])
-            for series in relevant[:5]:
+            import re
+            targeted=[x for x in data.get("series",[]) if
+                      re.search(r"player|passing yards|receiving yards|rushing yards|receptions",str(x.get("title","")),re.I)
+                      and str(x.get("category","")).lower()=="sports"]
+            print("Player-related sports series:",[{k:x.get(k) for k in ("ticker","title")} for x in targeted[:22]])
+            for series in targeted[:12]:
                 resp=await c.get("https://external-api.kalshi.com/trade-api/v2/markets",
                     params={"series_ticker":series["ticker"],"status":"open","limit":3},
                     headers={"Accept":"application/json"})
