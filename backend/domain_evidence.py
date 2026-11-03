@@ -207,15 +207,19 @@ def prop_spec(title: str) -> dict | None:
         ("receptions", r"\b(?:receptions?|catches)\b"),
         ("passing_touchdowns", r"\b(?:passing|pass)\s+touchdowns?\b"),
     ]
-    kind = next((k for k,p in patterns if re.search(p,text,re.I)),None)
-    if kind is None:
+    found = [k for k,p in patterns if re.search(p,text,re.I)]
+    if len(found) != 1:
         return None
+    kind = found[0]
     comparative = re.search(
         r"\b(over|more\s+than|above|at\s+least|under|below|less\s+than|fewer\s+than|at\s+most)\s+(\d+(?:\.\d+)?)\b",
         text, re.I)
     threshold = None
     comparator = None
     if comparative:
+        all_clauses = re.findall(r"\b(?:over|more\s+than|above|at\s+least|under|below|less\s+than|fewer\s+than|at\s+most)\s+\d+(?:\.\d+)?\b",text,re.I)
+        if len(set(x.lower() for x in all_clauses)) > 1:
+            return None
         threshold = float(comparative.group(2))
         op = comparative.group(1).lower().replace(" ","")
         comparator = (">=" if op == "atleast" else "<=" if op == "atmost" else
