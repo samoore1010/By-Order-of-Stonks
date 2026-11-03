@@ -225,7 +225,8 @@ class Desk:
             self.event(job_id, "Data warning", "Automatic exchange indexing failed.", error=str(exc)[:400])
         fallback = plan_fallback(request.question, request.compare_by, request.trading_rule)
         self.event(job_id, "Research design", "Translating your question into a bounded empirical study.")
-        plan = await self.model_plan(request.question, fallback)
+        plan = (fallback if job["origin"] == "scheduled" else
+                await self.model_plan(request.question, fallback))
         if request.compare_by != "auto":
             plan["compare_by"] = request.compare_by
         if request.trading_rule != "auto":
@@ -336,6 +337,37 @@ class Desk:
                    "Research report saved, including conclusions and limitations.", report_id=report["id"])
         return report
 
+    def maybe_schedule_autonomous(self):
+        """Queue one transparent, event-diverse calibration investigation per day.
+
+        It is a bounded research scan, NOT arbitrary self-modifying alpha search.
+        Test/development environments do not contact exchanges automatically.
+        """
+        if os.getenv("DESK_AUTONOMOUS_ENABLED", "true") != "true":
+            return
+        if os.getenv("APP_ENV", "production") == "development":
+            return
+        today = datetime.now(timezone.utc).date().isoformat()
+        state = self.s.store.get("desk-autonomous-daily") or {}
+        if state.get("date") == today:
+            return
+        if any(j["status"] in ("queued", "running")
+               for j in self.s.store.list("desk_job", 100)):
+            return
+        candidates = self.catalog.top_active_series(8)
+        if not candidates:
+            return
+        # Deterministic rotation through observed exchange liquidity; no invented themes.
+        chosen = candidates[datetime.now(timezone.utc).timetuple().tm_yday % len(candidates)]
+        question = ("Investigate historical probability calibration and execution-constrained "
+                    f"baseline strategies in the actual Kalshi series {chosen['ticker']}: "
+                    f"{chosen['title']}. Examine whether prices varied in calibration.")
+        job = self.enqueue(ResearchInput(question=question, max_markets=30,
+                                         include_web=False), origin="scheduled")
+        self.s.store.write("setting", {"date": today, "series": chosen["ticker"],
+                                       "job_id": job["id"], "at": now()},
+                           "desk-autonomous-daily")
+
     async def worker(self):
         """One worker process, bounded scheduled indexing and explicit research jobs."""
         last_refresh = datetime.min.replace(tzinfo=timezone.utc)
@@ -345,8 +377,10 @@ class Desk:
                 current = datetime.now(timezone.utc)
                 if (current-last_refresh).total_seconds() > 1800:
                     try:
-                        await self.catalog.refresh_series()
-                        await self.catalog.index_current(max_pages=2)
+                        if os.getenv("APP_ENV", "production") != "development":
+                            await self.catalog.refresh_series()
+                            await self.catalog.index_current(max_pages=2)
+                            self.maybe_schedule_autonomous()
                     except (ValueError, httpx.HTTPError) as exc:
                         self.s.store.write("desk_health", {"at": now(), "error": str(exc)[:350]})
                     last_refresh = current
@@ -392,6 +426,8 @@ class Desk:
                          "contracts_with_history": r["acquisition"]["contracts_with_candles"]}
                         for r in records],
             "paper": account,
+            "autonomous": {"enabled": os.getenv("DESK_AUTONOMOUS_ENABLED", "true") == "true",
+                           "last_run": self.s.store.get("desk-autonomous-daily")},
             "worker": self.worker_state,
             "model": bool(os.getenv("OPENAI_API_KEY")),
             "web_available": bool(os.getenv("OPENAI_API_KEY")) and
