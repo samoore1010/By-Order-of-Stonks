@@ -248,6 +248,34 @@ class MarketCatalog:
                 "source": "Kalshi REST + stored observations",
             }
 
+    def top_active_series(self, limit: int = 8) -> list[dict]:
+        """Select liquid, diverse series for bounded unattended research."""
+        from sqlalchemy import desc
+        with self.engine.connect() as con:
+            ranked = con.execute(
+                select(self.markets.c.series_ticker,
+                       func.sum(self.markets.c.volume).label("volume"))
+                .where(self.markets.c.status == "open")
+                .group_by(self.markets.c.series_ticker)
+                .order_by(desc("volume")).limit(80)
+            ).all()
+            series_rows = {r["ticker"]: r for r in
+                (dict(x._mapping) for x in con.execute(select(self.series)))}
+        selected, counts = [], {}
+        for ticker, volume in ranked:
+            row = series_rows.get(ticker)
+            if not row:
+                continue
+            category = row["category"] or "Other"
+            if counts.get(category, 0) >= 2:
+                continue
+            counts[category] = counts.get(category, 0) + 1
+            selected.append({"ticker": ticker, "title": row["title"],
+                             "category": category, "volume_proxy": float(volume or 0)})
+            if len(selected) >= limit:
+                break
+        return selected
+
     def get_market(self, ticker: str) -> dict | None:
         with self.engine.connect() as con:
             row = con.execute(select(self.markets).where(self.markets.c.ticker == ticker)).first()
