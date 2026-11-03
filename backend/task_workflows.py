@@ -189,11 +189,120 @@ async def match_verified_props(desk, raw: list[dict], game: dict,
             "warning": "Provisional player+date matches are not verified matchups. Only provider evidence showing both teams qualifies as a fully verified event relationship."}
 
 
+async def generic_exchange_combo(desk, job_id: str, plan: ResearchPlan) -> dict:
+    """Review an exact, actual Kalshi event without inventing multi-outcome odds.
+
+    Market-agnostic: can inspect related contracts on any source-backed
+    exchange event, but refuses to assume sibling outcomes are independent
+    or jointly satisfiable.
+    """
+    from .providers import normalize_market
+    from urllib.parse import quote
+    c=plan.constraints
+    observations={}
+    candidates=[]
+    event=None
+    errors=[]
+    desk.event(job_id,"Exchange event verification",
+               "Retrieving original contract and corresponding event identity.")
+    if c.exact_ticker:
+        try:
+            selected=await desk.s.kalshi.market(c.exact_ticker)
+            event_id=selected.get("event_id") or ""
+            if not TICKER_PATTERN.fullmatch(event_id):
+                raise ValueError("Exchange event ID unavailable")
+            source=await desk.s.kalshi.get("/events/"+quote(event_id,safe=""))
+            info=source.get("event") or {}
+            if not info.get("title"):
+                raise ValueError("Exchange event title unavailable")
+            event={"id":event_id,"title":info["title"],
+                   "source":desk.s.kalshi.base+"/events/"+quote(event_id,safe="")}
+            observations["verified_event"]=_state(
+                "verified","Exact selected contract is linked to the exchange event ID.",
+                event["source"],c.exact_ticker)
+            rows=await desk.s.kalshi.get("/markets",{
+                "event_ticker":event_id,"status":"open",
+                "limit":100,"mve_filter":"exclude"})
+            for raw in rows.get("markets",[]):
+                if raw.get("event_ticker") != event_id:
+                    continue
+                norm=normalize_market(raw)
+                if not norm.get("binary_supported") or norm["status"]!="open":
+                    continue
+                candidates.append({
+                    "ticker": norm["ticker"],"title":norm["title"],
+                    "event_ticker":event_id,"event_title":info["title"],
+                    "yes_bid":norm["yes_bid"],"yes_ask":norm["yes_ask"],
+                    "volume":norm["volume"],"relation_status":"verified",
+                    "evidence":[desk.s.kalshi.base+"/markets/"+norm["ticker"]],
+                })
+            observations["market_identification"]=_state(
+                "verified" if candidates else "partial",
+                "Linked contracts were queried from the original exchange event.",
+                *[x["ticker"] for x in candidates[:12]])
+        except (ValueError,KeyError,TypeError) as exc:
+            errors.append(str(exc)[:240])
+    else:
+        errors.append("The current generic combination adapter requires a uniquely verified market or event ID. Topic discovery remains available in Explore.")
+    for name in plan.required:
+        observations.setdefault(name,_state("blocked","Cannot certify this requirement from available exchange metadata."))
+    observations["source_provenance"]=_state(
+        "verified" if event else "partial",
+        "Exchange record provenance is explicit." if event else
+        "No uniquely verified source record was obtained.",
+        event["source"] if event else "")
+    if candidates:
+        observations["eligible_contracts"]=_state("partial",
+            "These are real sibling contracts, but their joint compatibility and payoff relationships have not been proven.",
+            *[x["ticker"] for x in candidates[:10]])
+    observations["requested_legs"]=_state("blocked",
+        "The requested number of jointly compatible legs cannot be safely selected from event siblings without verified logical constraints.")
+    observations["probability_estimates"]=_state("blocked","No independent fair-value model exists for the specified outcomes.")
+    observations["joint_probability"]=_state("blocked","No calibrated joint distribution or RFQ quote was obtained.")
+    observations["exchange_execution_status"]=_state("blocked","Native Kalshi RFQ quotation and trade submission are disabled.")
+    if c.target_probability_min is not None:
+        observations["probability_target"]=_state("blocked",
+            "No verified joint probability is available for the requested target range.")
+    result=completion(plan,observations)
+    return desk.s.store.write("desk_report",{
+        "task_type":"trade_construction","question":plan.query,"origin":"user",
+        "status":"incomplete","plan":plan.model_dump(),"completion":result,
+        "verified_event":event,
+        "trade_review":{
+            "requested_legs":c.requested_legs,
+            "candidate_legs":candidates[:30],"proposed_legs":[],
+            "requested_probability_range":[c.target_probability_min,c.target_probability_max],
+            "joint_probability":None,"native_combo_quote":None,
+            "model":"not_calibrated","game_log_coverage":[],
+            "execution_status":"not_available",
+            "market_scan":{"retrieved":len(candidates),"errors":errors,
+                           "warning":"Sibling market coverage limited; mutual compatibility not established."},
+        },
+        "market_count":len(candidates),"current_markets":candidates[:30],
+        "selected_series":[],"acquisition":{"settled_market_count":0,
+            "candles_loaded":0,"contracts_with_candles":0,
+            "partial_universe":True,"market_errors":errors},
+        "studies":[],"external":{"status":"not_requested","text":"","sources":[]},
+        "limitations":[
+            "Multiple contracts in the same Kalshi event may be mutually exclusive or otherwise dependent.",
+            "No joint probability or native Kalshi combo quotation has been established.",
+            "This is a market-agnostic contract investigation, not an approved combination trade.",
+            *errors,
+        ],
+        "evidence":[{"title":"Kalshi event API",
+                    "url":"https://docs.kalshi.com/api-reference/events/get-event"}],
+        "conclusion":"Related exchange contracts were examined when available; the requested multivariate trade remains unverified.",
+        "real_money_execution":False,
+    })
+
+
 async def trade_construction(desk, job_id: str, plan: ResearchPlan,
                              sports: SportsEvidence | None = None) -> dict:
     """Explicitly refuse to certify a combo without independently evidenced joint odds."""
     sports = sports or SportsEvidence()
     c = plan.constraints
+    if c.exact_ticker and not (c.league == "NFL" and c.event_date):
+        return await generic_exchange_combo(desk,job_id,plan)
     obs: dict[str,dict] = {}
     sources, warnings, logs, trade_legs = [], [], [], []
     event, universe = None, None
