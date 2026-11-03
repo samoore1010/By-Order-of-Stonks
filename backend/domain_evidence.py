@@ -194,10 +194,10 @@ class SportsEvidence:
 
 
 def prop_spec(title: str) -> dict | None:
-    """Recognize only unambiguous numerical player-prop structures.
+    """Parse only unambiguous YES-side player statistic propositions.
 
-    No guessing player identity, threshold or statistic; the caller must verify
-    name and market with the exchange's own event / contract metadata.
+    'Over', 'under', and inclusive strike rules have different payoffs.
+    Never silently treat a BELOW contract as an ABOVE contract.
     """
     text = str(title or "").strip()
     patterns = [
@@ -207,15 +207,37 @@ def prop_spec(title: str) -> dict | None:
         ("receptions", r"\b(?:receptions?|catches)\b"),
         ("passing_touchdowns", r"\b(?:passing|pass)\s+touchdowns?\b"),
     ]
-    kind = next((k for k, p in patterns if re.search(p, text, re.I)), None)
-    amount = re.search(r"\b(?:over|at least|more than|above)\s+(\d+(?:\.\d+)?)\b", text, re.I)
-    if not amount:
-        # Alternate form: player passing yards over 200
-        amount = re.search(r"\b(\d+(?:\.\d+)?)\+?\s+(?:passing|rushing|receiving)\s+yards?\b", text, re.I)
-    if not kind or not amount:
+    kind = next((k for k,p in patterns if re.search(p,text,re.I)),None)
+    if kind is None:
         return None
-    return {"stat": kind, "threshold": float(amount.group(1)),
-            "direction": "over", "source_text": text}
+    comparative = re.search(
+        r"\b(over|more\s+than|above|at\s+least|under|below|less\s+than|fewer\s+than|at\s+most)\s+(\d+(?:\.\d+)?)\b",
+        text, re.I)
+    threshold = None
+    comparator = None
+    if comparative:
+        threshold = float(comparative.group(2))
+        op = comparative.group(1).lower().replace(" ","")
+        comparator = (">=" if op == "atleast" else "<=" if op == "atmost" else
+                      "<" if op in ("under","below","lessthan","fewerthan") else ">")
+    else:
+        plus = re.search(r"\b(\d+(?:\.\d+)?)\+\s*(?:passing|rushing|receiving)\s+yards?\b",text,re.I)
+        if plus:
+            threshold = float(plus.group(1))
+            comparator = ">="
+    if threshold is None or comparator is None:
+        return None
+    return {"stat":kind,"threshold":threshold,"operator":comparator,
+            "direction":"under" if comparator.startswith("<") else "over",
+            "source_text":text}
+
+
+def exceeds(value: float, operator: str, threshold: float) -> bool:
+    if operator==">":return value>threshold
+    if operator==">=":return value>=threshold
+    if operator=="<":return value<threshold
+    if operator=="<=":return value<=threshold
+    raise ValueError("Unsupported proposition operator")
 
 
 def metric_value(game: dict, stat: str) -> float | None:
@@ -255,7 +277,7 @@ def game_log_summary(player: dict, prop: dict, required: int) -> dict:
         "status": "partial" if len(values) != required else "verified",
     }
     if len(values) == required:
-        successes = sum(x > prop["threshold"] for x in values[-required:])
+        successes = sum(exceeds(x,prop.get("operator",">"),prop["threshold"]) for x in values[-required:])
         result.update({"success_count": successes, "observed_frequency": round(successes/required, 4),
                        "note": "Descriptive past-game frequency, NOT a calibrated probability for the upcoming game."})
     return result
