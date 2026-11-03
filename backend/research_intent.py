@@ -57,13 +57,15 @@ class Gate(BaseModel):
 
 
 def _target_date(text: str, current: datetime) -> tuple[str | None, str | None]:
-    match = re.search(r"\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b", text, re.I)
+    days = list(re.finditer(r"\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b", text, re.I))
+    match = days[-1] if days else None
     if match:
         day = match.group(1).lower()
         local = current.astimezone(ZoneInfo("America/New_York"))
         target = local.date() + timedelta(days=(DAY_NAMES[day] - local.weekday()) % 7)
         return day, target.isoformat()
-    match = re.search(r"\b(20\d{2})-(\d{2})-(\d{2})\b", text)
+    dates = list(re.finditer(r"\b(20\d{2})-(\d{2})-(\d{2})\b", text))
+    match = dates[-1] if dates else None
     if match:
         return None, match.group()
     return None, None
@@ -87,16 +89,18 @@ def classify(question: str, current: datetime | None = None) -> ResearchPlan:
                         ("this game", "this matchup", "this event", "upcoming game",
                          "thursday night", "tonight's game", "the match")) else
                       "market_investigation")
-    legs = re.search(r"\b(\d{1,2})[\s-]*(?:legs?|selections?)\b", q)
-    if not legs:
-        legs = re.search(r"\b(?:legs?|selections?)\s*(?:of|:)?\s*(\d{1,2})\b", q)
+    leg_matches = list(re.finditer(r"\b(\d{1,2})[\s-]*(?:legs?|selections?)\b", q))
+    leg_matches += list(re.finditer(r"\b(?:legs?|selections?)\s*(?:of|:)?\s*(\d{1,2})\b", q))
+    legs = max(leg_matches, key=lambda m:m.start()) if leg_matches else None
     nlegs = int(legs.group(1)) if legs else None
     if nlegs is not None and not 2 <= nlegs <= 12:
         raise ValueError("Supported trade construction requires between 2 and 12 legs")
     # Explicit ranges only. Never convert an unrequested probability to an edge.
-    pb = re.search(r"(\d{1,3}(?:\.\d+)?)\s*%\s*(?:-|–|to|through|and)\s*(\d{1,3}(?:\.\d+)?)\s*%", q)
+    pbs = list(re.finditer(r"(\d{1,3}(?:\.\d+)?)\s*%\s*(?:-|–|to|through|and)\s*(\d{1,3}(?:\.\d+)?)\s*%", q))
+    pb = pbs[-1] if pbs else None
     low, high = ((float(pb.group(1))/100, float(pb.group(2))/100) if pb else (None, None))
-    look = re.search(r"(?:last|past|previous|prior|most recent)\s+(\d{1,2})\s+(?:games?|matches?|events?)", q)
+    looks = list(re.finditer(r"(?:last|past|previous|prior|most recent)\s+(\d{1,2})\s+(?:games?|matches?|events?)", q))
+    look = looks[-1] if looks else None
     lookback = int(look.group(1)) if look else None
     day, at = _target_date(text, current)
     ticker = re.search(r"\b(?:ticker|contract)\s*[:=]\s*([A-Z0-9.-]{3,160})\b", text)
