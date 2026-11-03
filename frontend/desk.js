@@ -108,22 +108,21 @@ function capabilityReport(r){
   let html=head("RESEARCH / "+(r.task_type==="trade_construction"?"TRADE CONSTRUCTION":"EVENT INVESTIGATION"),
     "Request requirements and verified evidence",
     "The desk preserves your actual question. It will not replace an unmet trade-building request with an unrelated historical simulation.");
-  html+=panel("Your exact request","The following details are requirements, not optional suggestions.",
+  html+=panel("Your exact request","The investigation must retain the material requirements from your original question.",
     '<h2>'+esc(r.question)+'</h2>'+
-    '<div class="grid3" style="margin-top:18px">'+
+    (r.task_type==="trade_construction"?'<div class="grid3" style="margin-top:18px">'+
       metric("Requested trade legs",requested?String(requested):"Not specified","An exact market for every leg is required")+
       metric("Desired joint probability",constraints.target_probability_min!=null?
         pct(constraints.target_probability_min)+"–"+pct(constraints.target_probability_max):"Not specified",
-        "Must be based on a calibrated joint probability model")+
+        "A calibrated correlation-aware model is required")+
       metric("Historical lookback",constraints.lookback_games?
-        constraints.lookback_games+" games":"Not specified","Actual boxscores, not a model's opinion")+
-    '</div>');
-  html+=panel("Verified event","Only source-verified teams and kickoff are considered. No guessed matchups.",
+        constraints.lookback_games+" games":"Not specified","Actual player game statistics required")+'</div>':''));
+  html+=panel("Verified event","Only provider-verified event or exchange identifiers are presented as fact.",
     event?'<div class="notice"><strong>'+esc(event.title)+'</strong><br>'+
-      'Kickoff: '+esc(when(event.kickoff_utc))+'<br>'+
-      'Teams: '+esc(event.teams.map(t=>t.name).join(" vs "))+'<br>'+
-      '<a href="'+esc(safe(event.source))+'" target="_blank" rel="noopener noreferrer">Schedule source</a></div>':
-      none("Event not verified","A unique event could not be proven from a provider record. Player statistics and trade construction are blocked."));
+      (event.kickoff_utc?'Kickoff: '+esc(when(event.kickoff_utc))+'<br>':'')+
+      (event.teams?.length?'Teams: '+esc(event.teams.map(t=>t.name).join(" vs "))+'<br>':'')+
+      '<a href="'+esc(safe(event.source))+'" target="_blank" rel="noopener noreferrer">Original event source</a></div>':
+      none("Event not verified","An authoritative, uniquely linked event identifier could not be established. Topic matches alone do not prove event identity."));
   if(r.task_type==="trade_construction"){
     html+=panel("Game-log evidence","Counts reflect actual completed games retrieved before the verified kickoff, not implied future win probabilities.",
       logs.length?table(["Team","Requested","Verified","Provider"],
@@ -159,6 +158,12 @@ function capabilityReport(r){
         pct(tr.frechet_scenario?.[0])+' to '+pct(tr.frechet_scenario?.[1])+'. '+
         'These are not actual joint event probabilities or guaranteed quoted odds.</div>':'')+
       '<p>'+esc(tr.scenario_warning||"No defensible combined outcome probability can be calculated from current evidence.")+'</p>');
+  } else {
+    html+=panel("Current Kalshi markets and evidence","Only the exchange records actually retrieved are shown. They are not recommendations or proven pricing errors.",
+      r.current_markets?.length?table(["Related market","YES ask","Volume","Relationship"],
+        r.current_markets.map(m=>'<tr><td><strong>'+esc(m.title||m.ticker)+'</strong><small>'+esc(m.ticker)+'</small></td><td>'+
+          (m.yes_ask!=null?(m.yes_ask*100).toFixed(1)+"¢":"No quote")+'</td><td>'+num(m.volume)+'</td><td>'+esc(m.verification||"Source record")+'</td></tr>')):
+        none("No linked markets verified","No currently available contracts could be connected to this event within the bounded search."));
   }
   html+=requirementsView(r);
   if(r.external?.text){
