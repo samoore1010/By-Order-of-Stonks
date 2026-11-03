@@ -22,6 +22,19 @@ async def run():
             data=response.json()
             print("Kalshi series schema:",list(data.keys())[:10])
             print("series returned:",len(data.get("series",[])))
+            relevant=[x for x in data.get("series",[]) if any(t in str(x.get("title","")).lower() for t in ("football","nfl","passing yards","receiving yards"))]
+            print("Potential football series:",[{k:x.get(k) for k in ("ticker","title","category")} for x in relevant[:16]])
+            for series in relevant[:5]:
+                resp=await c.get("https://external-api.kalshi.com/trade-api/v2/markets",
+                    params={"series_ticker":series["ticker"],"status":"open","limit":3},
+                    headers={"Accept":"application/json"})
+                print("Sample series",series["ticker"],"HTTP",resp.status_code)
+                if resp.status_code==200:
+                    mk=resp.json().get("markets",[])
+                    print("market examples",[{k:x.get(k) for k in ("ticker","title","yes_sub_title","event_ticker","close_time")} for x in mk[:2]])
+                    if mk:
+                        ev=await c.get("https://external-api.kalshi.com/trade-api/v2/events/"+mk[0]["event_ticker"],headers={"Accept":"application/json"})
+                        print("event response",ev.status_code,({k:(ev.json().get("event") or {}).get(k) for k in ("title","sub_title","product_metadata")} if ev.status_code==200 else ""))
         response=await c.get(
             "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard",
             params={"dates":"20261105"},headers={"Accept":"application/json"})
@@ -48,6 +61,14 @@ async def run():
                     {"event":first})
                 print("Latest completed game boxscore keys:",list((raw.get("boxscore")or{}).keys()))
                 print("Player statistics teams returned:",len((raw.get("boxscore")or{}).get("players",[])))
+                rows=(raw.get("boxscore") or {}).get("players",[])
+                print("Boxscore stat groups and labels:",[{
+                    "name":cat.get("name"),"labels":cat.get("labels"),
+                    "athletes":len(cat.get("athletes",[]))} for team in rows[:1] for cat in team.get("statistics",[])[:4]])
+                parsed=await source.player_logs(team,[x["id"] for x in logs["games"]])
+                print("Parsed athletes:",len(parsed["players"]),"coverage errors:",len(parsed["failed"]))
+                if parsed["players"]:
+                    print("Sample parsed stat names:",list(next(iter(parsed["players"]))["games"].values())[0].keys())
 
 
 if __name__ == "__main__":
