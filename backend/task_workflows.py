@@ -356,32 +356,130 @@ async def trade_construction(desk, job_id: str, plan: ResearchPlan,
 
 async def event_investigation(desk, job_id: str, plan: ResearchPlan,
                               sports: SportsEvidence | None=None) -> dict:
-    """Verify a named event before initiating any generic exploratory study."""
-    obs={}
-    event=None
+    """Investigate a particular event without generic or fabricated backtests.
+
+    Event identity can be verified from a domain-specific schedule or exact
+    exchange market/event ID. General topical matches are labeled exploratory.
+    """
+    from .market_catalog import tokens
+    from .providers import normalize_market
+    obs, event, markets, sources, warnings = {}, None, [], [], []
+    obs["request_completion"]=_state("blocked",
+        "The request requires relevant event-specific analysis; observed exchange quotes alone do not establish a predictive edge.")
     if plan.constraints.league=="NFL" and plan.constraints.event_date:
+        desk.event(job_id,"Event verification","Checking scheduled event against an independent sports source.")
         try:
-            result=await (sports or SportsEvidence()).verify_nfl_event(plan.constraints.event_date)
-            event=result.get("game")
-            if event:
-                obs["verified_event"]=_state("verified","Confirmed actual schedule event.",
-                                             event["source"],"provider_event:"+event["id"])
-        except ValueError:
-            pass
-    for name in plan.required:
-        obs.setdefault(name,_state("blocked","A verified event and linked market evidence are required."))
-    status=completion(plan,obs)
+            verified=await (sports or SportsEvidence()).verify_nfl_event(plan.constraints.event_date)
+            if verified.get("game"):
+                event=verified["game"]
+                sources.append({"title":"Verified sports schedule","url":event["source"]})
+                obs["verified_event"]=_state("verified","Provider event ID, teams and kickoff verified.",
+                                               event["source"],"event:"+event["id"])
+        except ValueError as exc:
+            warnings.append(str(exc)[:240])
+        if event:
+            search=await locate_prop_markets(desk,event)
+            for raw in search["markets"]:
+                eid=raw.get("event_ticker") or ""
+                if not TICKER_PATTERN.fullmatch(eid):
+                    continue
+                try:
+                    data=await desk.s.kalshi.get("/events/"+eid)
+                    metadata=data.get("event") or {}
+                    title=" ".join(str(metadata.get(k) or "") for k in ("title","sub_title","subtitle"))
+                    if not _relation(title+" "+str(metadata.get("product_metadata") or ""),event["teams"]):
+                        continue
+                    item=normalize_market(raw,raw.get("_category") or "Sports")
+                    markets.append({**item,"event_title":title,
+                                    "verification":"verified provider matchup"})
+                except ValueError:
+                    continue
+                if len(markets)>=45:
+                    break
+            warnings.extend([str(x)[:180] for x in search["failures"][:6]])
+    elif plan.constraints.exact_ticker:
+        desk.event(job_id,"Event verification","Retrieving exact exchange contract and linked event metadata.")
+        ticker=plan.constraints.exact_ticker
+        try:
+            m=await desk.s.kalshi.market(ticker)
+            eid=m.get("event_id") or ""
+            linked=await desk.s.kalshi.get("/events/"+eid)
+            info=linked.get("event") or {}
+            if info.get("title") and eid:
+                event={"id":eid,"title":info["title"],
+                       "source":desk.s.kalshi.base+"/events/"+eid}
+                obs["verified_event"]=_state("verified","Matched exact exchange event and ticker identifiers.",
+                                               event["source"],ticker)
+                markets.append({**m,"event_title":info["title"],"verification":"exact exchange ticker"})
+                sources.append({"title":"Kalshi event metadata","url":event["source"]})
+        except ValueError as exc:
+            warnings.append(str(exc)[:240])
+    else:
+        desk.event(job_id,"Market search",
+                   "Searching real Kalshi series for related current contracts; no event identity assumed.")
+        series, seen=set(),[]
+        for term in tokens(plan.query)[:8]:
+            for info in desk.catalog.search_series(term,5):
+                if info["ticker"] not in series:
+                    series.add(info["ticker"])
+                    seen.append(info)
+                if len(seen)>=8:
+                    break
+        for info in seen[:8]:
+            try:
+                payload=await desk.s.kalshi.get("/markets",{
+                    "series_ticker":info["ticker"],"status":"open",
+                    "limit":100,"mve_filter":"exclude"})
+                for raw in payload.get("markets",[])[:100]:
+                    if not TICKER_PATTERN.fullmatch(str(raw.get("ticker") or "")):
+                        continue
+                    markets.append({**normalize_market(raw,info.get("category") or "Other"),
+                                    "verification":"topic-only; event not independently verified"})
+                    if len(markets)>=45:
+                        break
+            except ValueError as exc:
+                warnings.append(str(exc)[:160])
+            if len(markets)>=45:
+                break
+    if markets:
+        obs["market_identification"]=_state(
+            "verified" if event else "partial",
+            "Current contracts were retrieved from the exchange. Topic-only results are not a unique event identity.",
+            *[m["ticker"] for m in markets[:8]])
+        obs["source_provenance"]=_state("verified","Real exchange observations retrieved.",
+                                           *[m["ticker"] for m in markets[:8]])
+        obs["relevant_evidence"]=_state(
+            "partial","Contract rules, bid/ask and event relationships are observations, not independent outcome forecasts.",
+            *[m["ticker"] for m in markets[:8]])
+    else:
+        obs["market_identification"]=_state("blocked","No verified relevant current contracts were retrieved.")
+        obs["source_provenance"]=_state("partial","Provider discovery was attempted but yielded no usable evidence.")
+        obs["relevant_evidence"]=_state("blocked","No market or independent event data sufficient for this request.")
+    for key in plan.required:
+        obs.setdefault(key,_state("blocked","Required independent evidence was not obtained."))
+    result=completion(plan,obs)
+    ext={"status":"not_requested","text":"","sources":[]}
+    if event and not plan.constraints.league=="NFL":
+        # Event-specific external context is separated from quantitative evidence.
+        ext=await desk.external_research("Verified Kalshi event: "+event["title"]+
+                                        ". Research publicly verifiable context relevant to "+plan.query)
     return desk.s.store.write("desk_report",{
         "task_type":plan.intent,"question":plan.query,"origin":"user",
-        "status":"incomplete","plan":plan.model_dump(),
-        "completion":status,"verified_event":event,
-        "market_count":0,"current_markets":[],"selected_series":[],
-        "acquisition":{"settled_market_count":0,"candles_loaded":0,
-                       "contracts_with_candles":0,"partial_universe":True},
-        "studies":[],"external":{"status":"not_requested","sources":[],"text":""},
-        "limitations":["This request requires event-specific evidence and methods not yet available in the selected domain adapter."],
-        "evidence":[{"title":"Verified schedule" if event else "Event verification pending",
-                     "url":event["source"] if event else "https://docs.kalshi.com/api-reference/events/get-events"}],
-        "conclusion":"Event research is incomplete; no unrelated generic backtest was substituted.",
+        "status":"incomplete","plan":plan.model_dump(),"completion":result,
+        "verified_event":event,
+        "market_count":len(markets),"current_markets":markets[:45],
+        "selected_series":[],"acquisition":{"settled_market_count":0,
+            "candles_loaded":0,"contracts_with_candles":0,"partial_universe":True,
+            "market_errors":warnings[:10]},
+        "studies":[],"external":ext,
+        "limitations":[
+            "The event-specific investigation has not established a calibrated fair-value probability or executable trading edge.",
+            "Only a bounded set of current exchange contracts and verified events was retrieved.",
+            "Unverified topic matches cannot be represented as the requested event.",
+            *warnings[:6],
+        ],
+        "evidence":sources+[{"title":"Kalshi event API",
+            "url":"https://docs.kalshi.com/api-reference/events/get-event"}],
+        "conclusion":"Event research is incomplete. Verified event and exchange evidence are shown; no unrelated historical backtest was substituted.",
         "real_money_execution":False,
     })
