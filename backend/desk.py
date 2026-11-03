@@ -246,12 +246,24 @@ class Desk:
                    series=[s["ticker"] for s in selected_series])
         current = self.catalog.search_markets(request.question, limit=50)
         current_markets = current["markets"]
-        # Current matches are searched independently across relevant series; not just the first page.
+        # Request current contracts directly from relevant exchange series.
+        # This is independent of the first few global pages indexed at startup.
+        current_errors = []
         if selected_series:
-            for serie in selected_series:
+            for serie in selected_series[:8]:
                 if len(current_markets) >= 80:
                     break
-                cached = self.catalog.search_markets(series=serie["ticker"], status="open", limit=15)
+                try:
+                    data = await self.s.kalshi.get("/markets", {
+                        "series_ticker": serie["ticker"], "status": "open",
+                        "limit": 100, "mve_filter": "exclude"})
+                    raw = [{**m, "series_ticker": serie["ticker"],
+                            "_category": serie.get("category") or "Unclassified"}
+                           for m in data.get("markets", [])]
+                    self.catalog.put_markets(raw, "kalshi-series-open")
+                except (ValueError, KeyError, TypeError) as exc:
+                    current_errors.append({"series": serie["ticker"], "error": str(exc)[:200]})
+                cached = self.catalog.search_markets(series=serie["ticker"], status="open", limit=20)
                 current_markets.extend(cached["markets"])
         current_markets = list({m["ticker"]: m for m in current_markets}.values())[:80]
         historic = {"markets": [], "discovered": 0, "issues": [], "truncation": [],
@@ -314,7 +326,7 @@ class Desk:
                 "market_pages": historic["pages"],
                 "candles_loaded": sum(x.get("count", 0) for x in history_results),
                 "contracts_with_candles": sum(x.get("count", 0) >= 2 for x in history_results),
-                "market_errors": historic["issues"][:20],
+                "market_errors": (historic["issues"] + current_errors)[:20],
                 "historical_errors": history_errors[:25],
                 "market_truncation": historic["truncation"],
                 "series_requested": historic["series_requested"],
