@@ -112,6 +112,16 @@ function reportView(){
         (study.overall?.calibration?.bins||[]).map(b=>'<tr><td>'+esc(b.range)+'</td><td>'+num(b.contracts)+'</td><td>'+pct(b.observed_yes_frequency)+'</td><td>'+pct(b.mean_quoted_probability)+'</td></tr>'))+
       '</details><details><summary>Exact simulation metrics and warnings</summary><pre>'+esc(JSON.stringify(study.overall?.simulation||{},null,2))+'</pre></details>');
   }
+  const related=(r.current_markets||[]).filter(m=>m.status==="open");
+  html+=panel("Related current Kalshi contracts",
+    "Real open markets found during this investigation. These are NOT automatically mispriced, ranked by edge or recommended trades.",
+    related.length?table(["Market","YES bid / ask","Volume","Action"],
+      related.slice(0,35).map(m=>'<tr><td><strong>'+esc(m.title||m.ticker)+'</strong><small>'+
+      esc(m.ticker)+' · '+esc(m.category||"Unclassified")+'</small></td><td>'+
+      (m.yes_bid==null?"No bid":(100*m.yes_bid).toFixed(1)+"¢")+' / '+
+      (m.yes_ask==null?"No ask":(100*m.yes_ask).toFixed(1)+"¢")+'</td><td>'+
+      num(m.volume)+'</td><td>'+act("Inspect paper ticket","ticket",m.ticker)+'</td></tr>')):
+      none("No related current contracts found","The matching series may be entirely historical, or open contracts may be outside the bounded search."));
   const external=r.external||{},sources=[...(external.sources||[]),...(r.evidence||[])];
   html+=panel("Independent research and sources","External context is not used as historical point-in-time evidence.",
     notice(external.status==="retrieved"?"Web research retrieved.":"Web search unavailable or not requested; exchange evidence remains valid.")+
