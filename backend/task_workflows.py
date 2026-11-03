@@ -72,15 +72,19 @@ def _includes_player(title: str, name: str) -> bool:
     return bool(candidate and candidate in normalized)
 
 
-async def locate_prop_markets(desk, event: dict, max_series=10) -> dict:
+async def locate_prop_markets(desk, event: dict, max_series=16) -> dict:
     """Fetch real Kalshi markets in relevant sport series. Reject unverified events."""
     catalog = desk.catalog
     matching_series = []
-    for term in ("football", "nfl", "player"):
-        matching_series.extend(catalog.search_series(term, 20))
+    for term in ("passing yards", "receiving yards", "rushing yards",
+                 "player props", "football player", "nfl player", "passing touchdowns"):
+        matching_series.extend(catalog.search_series(term, 12))
     seen = set()
     unique = []
     for row in matching_series:
+        title = str(row.get("title") or "").lower()
+        if not re.search(r"player|passing|rushing|receiving|reception|touchdown|quarterback|yards|\btds?\b", title):
+            continue
         if row["ticker"] not in seen:
             seen.add(row["ticker"])
             unique.append(row)
