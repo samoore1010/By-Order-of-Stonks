@@ -119,6 +119,7 @@ class KalshiFixture:
             ]
             return {"markets":[{**m,"close_time":"2026-11-06T01:15:00Z",
                 "yes_bid_dollars":"0.3000","yes_ask_dollars":"0.3400",
+                "notional_value_dollars":"1.0000","status":"open",
                 "volume_fp":"100"} for m in markets]}
         if path=="/events/TEST-EVT":
             return {"event":{"title":"North Wolves vs South Hawks"}}
