@@ -19,7 +19,7 @@ from pydantic import Field
 from .models import Strict, now, PaperOrder
 from .market_catalog import MarketCatalog, tokens, TICKER_PATTERN
 from .quant_research import study, MODELS
-from .research_intent import classify, completion
+from .research_intent import classify, completion, SERIES_SEARCH_TERMS
 from .task_workflows import trade_construction, event_investigation
 
 
@@ -284,6 +284,19 @@ class Desk:
             raise ValueError("Minimum YES price must be below maximum YES price")
         series_candidates = []
         seen = set()
+        compare_groups = intent.constraints.compare_groups
+        # Allocate discovery slots to each explicitly requested comparison group.
+        # Searching only broad terms can overfill the universe with one subtype.
+        if len(compare_groups) >= 2:
+            plan["compare_by"] = "market_type"
+            for group in compare_groups:
+                count_for_group = 0
+                for term in SERIES_SEARCH_TERMS.get(group, [group]):
+                    for row in self.catalog.search_series(term, 8):
+                        if row["ticker"] not in seen and count_for_group < 4:
+                            series_candidates.append(row)
+                            seen.add(row["ticker"])
+                            count_for_group += 1
         for term in plan["search_terms"][:10]:
             for row in self.catalog.search_series(term, 5):
                 if row["ticker"] not in seen:
@@ -291,7 +304,7 @@ class Desk:
                     seen.add(row["ticker"])
         if not series_candidates and plan.get("category"):
             series_candidates = self.catalog.search_series(plan["category"], 12)
-        selected_series = series_candidates[:12]
+        selected_series = series_candidates[:16]
         self.event(job_id, "Universe selection",
                    f"Matched {len(selected_series)} distinct series from {self.catalog.overview()['series_indexed']} indexed series.",
                    series=[s["ticker"] for s in selected_series])
@@ -323,8 +336,10 @@ class Desk:
         if selected_series:
             self.event(job_id, "Historical collection",
                        "Discovering settled markets and archived contracts automatically.")
+            # Give every requested series an opportunity to contribute evidence.
             historic = await self.catalog.discover_history(
-                selected_series, per_series=30, max_markets=request.max_markets)
+                selected_series, per_series=max(3, request.max_markets // max(1, len(selected_series))),
+                max_markets=request.max_markets)
             for idx, market in enumerate(historic["markets"]):
                 if idx % 10 == 0:
                     self.event(job_id, "Historical collection",
@@ -368,6 +383,18 @@ class Desk:
         if request.include_web and job["origin"] != "scheduled":
             self.event(job_id, "External context", "Checking independent public evidence when provider access is available.")
             ext = await self.external_research(request.question)
+        observed_groups = {}
+        for result in experiments:
+            for group in result.get("groups", []):
+                observed_groups[group["group"]] = max(observed_groups.get(group["group"], 0),
+                                                       group.get("n_events", 0))
+        group_coverage = {name: observed_groups.get(name, 0) for name in compare_groups}
+        full_group_coverage = (len(compare_groups) >= 2 and
+                               all(count >= 30 for count in group_coverage.values()))
+        if compare_groups and not full_group_coverage:
+            limitations.append("Requested comparison groups lack sufficient distinct events: " +
+                ", ".join(f"{name}: {count}" for name, count in group_coverage.items()) +
+                ". Do not infer superiority from missing groups.")
         evidence_gates = {
             "source_provenance": {"status": "verified", "evidence": ["Kalshi REST market and candle endpoints"],
                                   "reason": "Provider source and collection provenance are recorded."},
@@ -383,21 +410,31 @@ class Desk:
             "reproducible_metrics": {"status": "verified" if max_valid > 0 else "blocked",
                                      "evidence": ["Deterministic quant_research.study"],
                                      "reason": "A reproducible numerical experiment was completed."},
+            "requested_group_coverage": {
+                "status": "verified" if full_group_coverage else "partial" if any(group_coverage.values()) else "blocked",
+                "evidence": [f"{name}: {count} event IDs" for name,count in group_coverage.items()],
+                "reason": "Every expressly requested comparison group must have at least 30 distinct events for a descriptive group comparison."},
             "market_coverage": {"status": "partial",
                                 "reason": "Only a capped subset of related series and archived contracts was retrieved."},
             "testable_hypothesis": {"status": "verified" if experiments and selected_series else "blocked",
                                     "evidence": [x["model"] for x in experiments],
                                     "reason": "Concrete baseline hypotheses were tested; no independent predictive edge established."},
-            "request_completion": {"status": "blocked",
-                                   "reason": "Descriptive results do not establish a validated tradable edge or comprehensive coverage."},
+            "request_completion": {
+                "status": "verified" if intent.intent == "comparative_backtest" and
+                    (full_group_coverage if compare_groups else max_valid >= 30) else "partial",
+                "evidence": ["Descriptive comparison against settled exchange outcomes"] if
+                    intent.intent == "comparative_backtest" and
+                    (full_group_coverage if compare_groups else max_valid >= 30) else [],
+                "reason": "A descriptive historical comparison may be completed without proving an executable trading edge. Actual historical fills remain modeled."},
         }
         evidence_check = completion(intent, evidence_gates)
         report = self.s.store.write("desk_report", {
             "task_type": intent.intent,
             "completion": evidence_check,
             "constraints": intent.constraints.model_dump(exclude_none=True),
+            "comparison_coverage": group_coverage,
             "question": request.question, "origin": job["origin"],
-            "status": ("limited_evidence" if max_valid < 30 else "descriptive_analysis"),
+            "status": ("limited_evidence" if max_valid < 30 or (compare_groups and not full_group_coverage) else "descriptive_analysis"),
             "plan": plan,
             "market_count": len(current_markets),
             "current_markets": current_markets[:60],
