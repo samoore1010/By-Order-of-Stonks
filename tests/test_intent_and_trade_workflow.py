@@ -57,7 +57,7 @@ def test_exact_statistic_mapping_avoids_using_rushing_yards_as_passing():
     assert metric_value(data,"rushing_yards") == 15
     assert metric_value(data,"receiving_yards") is None
     assert prop_spec("John Smith passing yards over 200") == {
-        "stat":"passing_yards","threshold":200., "direction":"over",
+        "stat":"passing_yards","threshold":200., "direction":"over","operator":">",
         "source_text":"John Smith passing yards over 200"}
 
 
@@ -185,3 +185,21 @@ def test_conversational_update_changes_only_explicit_leg_count():
     assert changed.constraints.event_date=="2026-11-05"
     assert changed.constraints.target_probability_min==pytest.approx(.45)
     assert changed.constraints.target_probability_max==pytest.approx(.60)
+
+
+def test_under_and_inclusive_player_proposition_semantics():
+    from backend.domain_evidence import exceeds, game_log_summary
+    under=prop_spec("John Smith passing yards under 200")
+    assert under["operator"]=="<"
+    assert not exceeds(200,under["operator"],200)
+    at_least=prop_spec("John Smith passing yards at least 200")
+    assert at_least["operator"]==">="
+    assert exceeds(200,at_least["operator"],200)
+    plus=prop_spec("John Smith 200+ passing yards")
+    assert plus["operator"]==">="
+    player={"name":"John Smith","games":{"a":{"passing:yds":"199"},
+                                          "b":{"passing:yds":"200"},
+                                          "c":{"passing:yds":"210"}}}
+    result=game_log_summary(player,under,3)
+    assert result["success_count"]==1
+    assert result["observed_frequency"]==pytest.approx(1/3,abs=.001)
