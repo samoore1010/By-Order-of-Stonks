@@ -4,6 +4,7 @@ import asyncio
 import base64
 import hashlib
 import json
+import math
 import os
 import time
 from datetime import datetime, timezone
@@ -51,8 +52,8 @@ def normalize_market(m: dict, category: str = "Unclassified") -> dict:
 def parse_book(data: dict) -> dict:
     new = data.get("orderbook_fp")
     if new is not None:
-        yes = [(float(p), float(q)) for p, q in new.get("yes_dollars", [])]
-        no = [(float(p), float(q)) for p, q in new.get("no_dollars", [])]
+        yes = [(float(p), float(q)) for p, q in (new.get("yes_dollars") or [])]
+        no = [(float(p), float(q)) for p, q in (new.get("no_dollars") or [])]
     elif "orderbook" in data:
         old = data["orderbook"]
         yes = [(float(p)/100, float(q)) for p, q in (old.get("yes") or [])]
@@ -60,9 +61,8 @@ def parse_book(data: dict) -> dict:
     else:
         raise ValueError("Unrecognized order-book schema; paper orders blocked")
     for p, q in yes+no:
-        if not 0 <= p <= 1 or q < 0:
+        if not 0 <= p <= 1 or not math.isfinite(q) or q < 0:
             raise ValueError("Invalid order-book level")
-    # YES asks are the complement of NO bids, and conversely.
     book = {"yes": sorted([[round(1-p, 6), q] for p, q in no]),
             "no": sorted([[round(1-p, 6), q] for p, q in yes])}
     book["fingerprint"] = hashlib.sha256(json.dumps(book, sort_keys=True).encode()).hexdigest()
@@ -131,7 +131,12 @@ class Kalshi:
             "fetched_at": now(), "coverage": "One API page; load more to continue. Not an exchange-wide scan."}
 
     async def market(self, ticker: str) -> dict:
-        return normalize_market((await self.get("/markets/"+quote(ticker, safe="")))["market"])
+        path = quote(ticker, safe="")
+        try:
+            raw = await self.get("/markets/"+path)
+        except ValueError:
+            raw = await self.get("/historical/markets/"+path)
+        return normalize_market(raw["market"])
 
     async def book(self, ticker: str) -> dict:
         return parse_book(await self.get("/markets/"+quote(ticker, safe="")+"/orderbook", {"depth": 20}))
@@ -143,7 +148,6 @@ class Kalshi:
         rows, rejected, rules, errors = [], [], {}, []
         for ticker in request.tickers:
             try:
-                # Resolve both stores: a moving cutoff must not silently truncate coverage.
                 archived = False
                 try:
                     raw = (await self.get("/markets/"+quote(ticker, safe="")))["market"]
@@ -165,7 +169,6 @@ class Kalshi:
                         f"/series/{request.series}/markets/{ticker}/candlesticks")
                 start, end = int(request.start.timestamp()), int(min(request.end, settled_dt).timestamp())
                 candles = []
-                # Bounded chunks avoid endpoint maximum candle counts. No silent incomplete result.
                 width = 400*request.interval*60
                 for left in range(start, end, width):
                     data = await self.get(path, {"start_ts": left, "end_ts": min(end, left+width),

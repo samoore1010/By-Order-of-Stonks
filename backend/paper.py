@@ -31,7 +31,6 @@ def execute(state: dict, request: PaperOrder, market: dict, book: dict) -> tuple
     age = (datetime.now(timezone.utc)-datetime.fromisoformat(book["received_at"].replace("Z", "+00:00"))).total_seconds()
     if not 0 <= age <= 10:
         raise ValueError("Quote snapshot is stale; request a fresh book")
-    # Copy state so any failure leaves the persisted account untouched.
     state = json.loads(json.dumps(state))
     positions = state["positions"]
     contract_cost = sum(p["cost"] for p in positions if p["ticker"] == request.ticker)
@@ -60,7 +59,6 @@ def execute(state: dict, request: PaperOrder, market: dict, book: dict) -> tuple
         used[level_key] = used.get(level_key, 0)+size
     cost = round(sum(f["cost"] for f in fills), 8)
     total_fee = round(sum(f["fee"] for f in fills), 4)
-    # Per-level rounding can exceed the conservative reservation for fragmented fills.
     if cost > min(state["cash"], initial*limits["contract_fraction"]-contract_cost,
                   initial*limits["event_fraction"]-event_cost, initial*limits["total_fraction"]-total_cost)+1e-9:
         raise ValueError("Actual modeled fill fees would breach a risk limit")
