@@ -15,6 +15,25 @@ Intent = Literal["trade_construction", "comparative_backtest",
                  "market_investigation", "event_analysis"]
 DAY_NAMES = {"monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3,
              "friday": 4, "saturday": 5, "sunday": 6}
+# Market-type concepts, not NFL-specific strategies. These map to actual
+# series/contract metadata labels used by the historical comparison engine.
+COMPARISON_ALIASES = {
+    "Player performance": r"\bplayer\s+props?\b|\b(?:passing|rushing|receiving)\s+yards?\b|\bplayer\s+performance\b",
+    "Match winner": r"\bmoney\s*line\b|\bmatch\s+winner\b|\bgame\s+winner\b",
+    "Margin / spread": r"\bspreads?\b|\bmargin\s+of\s+victory\b|\bpoint\s+differential\b",
+    "Weather": r"\bweather\b|\btemperature\b|\brainfall\b",
+    "Politics": r"\belections?\b|\bpolitics?\b|\bsenate\b",
+    "Economics": r"\beconomic\b|\binflation\b|\bgdp\b",
+}
+SERIES_SEARCH_TERMS = {
+    "Player performance": ["player props", "passing yards", "receiving yards"],
+    "Match winner": ["moneyline", "match winner", "game winner"],
+    "Margin / spread": ["spread", "margin of victory"],
+    "Weather": ["weather", "temperature"],
+    "Politics": ["election", "senate"],
+    "Economics": ["inflation", "economic"],
+}
+
 
 
 class Constraints(BaseModel):
@@ -28,6 +47,7 @@ class Constraints(BaseModel):
     event_date: str | None = None
     league: str | None = None
     exact_ticker: str | None = None
+    compare_groups: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def valid(self):
@@ -109,6 +129,8 @@ def classify(question: str, current: datetime | None = None) -> ResearchPlan:
     filt = ("player_prop" if "player prop" in q else
             "moneyline" if "moneyline" in q else
             "spread" if "spread" in q else None)
+    compare_groups = [name for name, expression in COMPARISON_ALIASES.items()
+                      if re.search(expression, q, re.I)] if intent == "comparative_backtest" else []
     constraints = Constraints(
         requested_legs=nlegs,
         target_probability_min=low,
@@ -118,7 +140,8 @@ def classify(question: str, current: datetime | None = None) -> ResearchPlan:
         relative_day=day,
         event_date=at,
         league=league,
-        exact_ticker=ticker.group(1) if ticker else None
+        exact_ticker=ticker.group(1) if ticker else None,
+        compare_groups=compare_groups
     )
     required = ["market_identification", "source_provenance", "request_completion"]
     capability = "market_catalog"
@@ -133,6 +156,8 @@ def classify(question: str, current: datetime | None = None) -> ResearchPlan:
         capability = "trade_assembly"
     elif intent == "comparative_backtest":
         required += ["historical_samples", "consistent_rules", "reproducible_metrics"]
+        if len(compare_groups) >= 2:
+            required.append("requested_group_coverage")
         capability = "historical_comparison"
     elif intent == "event_analysis":
         required += ["verified_event", "relevant_evidence"]
