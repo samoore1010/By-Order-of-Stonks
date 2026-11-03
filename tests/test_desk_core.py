@@ -161,3 +161,17 @@ def test_new_endpoints_keep_production_trading_disabled(tmp_path, monkeypatch):
     assert client.post("/api/desk/research", json={"question": "Compare a set of contract types"},
                        headers={"X-Stonks-Request":"1"}).status_code == 202
     assert client.post("/api/live/orders", json={}, headers={"X-Stonks-Request":"1"}).status_code == 403
+
+
+def test_market_subtypes_use_source_series_metadata():
+    player = sample(10)
+    player["raw"]["_series_title"] = "Football player passing yards"
+    margin = sample(11)
+    margin["raw"]["_series_title"] = "Football point spread"
+    winner = sample(12)
+    winner["raw"]["_series_title"] = "Football match winner"
+    values = samples([player, margin, winner])
+    assert {v["type"] for v in values} == {
+        "Player performance", "Margin / spread", "Match winner"
+    }
+    assert all(v["type_provenance"] == "inferred" for v in values)
