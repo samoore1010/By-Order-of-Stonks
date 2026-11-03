@@ -22,6 +22,7 @@ const state={tab:"explore",data:null,markets:[],marketCount:0,marketOffset:0,
   reportId:null,studyIndex:0,jobId:null,assistantHidden:window.innerWidth<1020};
 let busyMarkets=false;
 let toastTimer;
+const deskSession=(()=>{const saved=sessionStorage.getItem("stonks-research-session");if(saved&&/^[A-Za-z0-9-]{8,80}$/.test(saved))return saved;const id=crypto.randomUUID();sessionStorage.setItem("stonks-research-session",id);return id;})();
 function toast(s,bad=false){let e=$("#toast");e.textContent=s;e.hidden=false;e.style.borderColor=bad?"#a25a5a":"#5a717c";clearTimeout(toastTimer);toastTimer=setTimeout(()=>e.hidden=true,8000);}
 async function api(path,body){
   const opts={method:body===undefined?"GET":"POST",headers:{"Content-Type":"application/json","X-Stonks-Request":"1"}};
@@ -380,7 +381,7 @@ $("#assistant-form").addEventListener("submit",async e=>{
   assistant("user",message);
   const reply=assistant("bot","Working with the available research tools…");
   try{
-    const result=await api("/desk/chat",{message,report_id:state.tab==="research"?state.reportId:null});
+    const result=await api("/desk/chat",{message,report_id:state.tab==="research"?state.reportId:null,session_id:deskSession});
     reply.textContent=result.text||"Research queued.";
     if(result.job_id)state.jobId=result.job_id;
   }catch(err){reply.textContent=err.message;toast(err.message,true);}finally{button.disabled=false;}
