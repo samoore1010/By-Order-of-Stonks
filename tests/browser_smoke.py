@@ -65,7 +65,7 @@ def run():
             page.wait_for_selector('#ticket-form')
             page.locator('#ticket-form [name=confirm]').check()
             page.locator('#ticket-form [type=submit]').click()
-            page.wait_for_selector('h1:has-text("Paper capital")')
+            page.wait_for_selector('h1:has-text("Monitor paper trades")')
             assert len(s.store.list('paper_order'))==1
             page.locator('nav [data-id="backtests"]').click()
             page.locator('#backtest-form [type=submit]').click()
