@@ -132,7 +132,7 @@ def test_research_question_produces_real_report(tmp_path, monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     desk = make_desk(tmp_path)
     asyncio.run(desk.catalog.refresh_series())
-    request = ResearchInput(question="Investigate the Test variable markets", include_web=False)
+    request = ResearchInput(question="Investigate the Test forecasts markets", include_web=False)
     job = desk.enqueue(request)
     report = asyncio.run(desk.run_research(job["id"]))
     assert report["status"] == "limited_evidence"
