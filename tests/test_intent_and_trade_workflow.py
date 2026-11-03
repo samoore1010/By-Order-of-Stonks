@@ -203,3 +203,16 @@ def test_under_and_inclusive_player_proposition_semantics():
     result=game_log_summary(player,under,3)
     assert result["success_count"]==1
     assert result["observed_frequency"]==pytest.approx(1/3,abs=.001)
+
+
+def test_nfl_series_lookup_does_not_match_inflation(tmp_path):
+    desk=Desk(Services(Store("sqlite:///"+str(tmp_path/"series.db"))))
+    desk.catalog.put_series([
+        {"ticker":"KXCPIELECYOY","title":"U.S. electricity inflation YoY","category":"Economics"},
+        {"ticker":"KXNFLPASSYDS","title":"Pro Football Passing Yards","category":"Sports"},
+        {"ticker":"KXNFLWEEKTIE","title":"NFL Weekly Tie","category":"Sports"},
+    ])
+    results=desk.catalog.search_series("NFL",20)
+    assert "KXCPIELECYOY" not in [x["ticker"] for x in results]
+    assert "KXNFLWEEKTIE" in [x["ticker"] for x in results]
+    assert [x["ticker"] for x in desk.catalog.search_series("passing yards")] == ["KXNFLPASSYDS"]
