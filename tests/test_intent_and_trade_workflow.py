@@ -164,3 +164,24 @@ def test_unverified_event_blocks_trade_without_unrelated_backtest(tmp_path):
     assert result["studies"]==[]
     assert result["status"]=="incomplete"
     assert "Verified event" in result["completion"]["missing"]
+
+
+def test_comparison_captures_every_express_market_type():
+    plan=classify("Compare NFL player props versus moneyline versus spread profitability")
+    assert plan.intent=="comparative_backtest"
+    assert set(plan.constraints.compare_groups)=={
+        "Player performance","Match winner","Margin / spread"
+    }
+    assert "requested_group_coverage" in plan.required
+
+
+def test_conversational_update_changes_only_explicit_leg_count():
+    original=("Build 4-leg combo for Thursday night NFL player props, "
+              "last 7 games, target 45%-60% joint probability.")
+    changed=classify(original+"\nUpdated requirement: Make it 3 legs instead.",
+                     current=datetime(2026,11,3,21,tzinfo=timezone.utc))
+    assert changed.constraints.requested_legs==3
+    assert changed.constraints.lookback_games==7
+    assert changed.constraints.event_date=="2026-11-05"
+    assert changed.constraints.target_probability_min==pytest.approx(.45)
+    assert changed.constraints.target_probability_max==pytest.approx(.60)
