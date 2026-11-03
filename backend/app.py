@@ -90,11 +90,16 @@ def create_app(services: Services | None = None):
     @asynccontextmanager
     async def lifespan(app):
         task = asyncio.create_task(s.worker())
+        desk_task = asyncio.create_task(app.state.desk.worker())
         app.state.worker = task
+        app.state.desk_worker = desk_task
         yield
         task.cancel()
+        desk_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
+        with contextlib.suppress(asyncio.CancelledError):
+            await desk_task
 
     app = FastAPI(title="By Order of Stonks", version="0.2.0", lifespan=lifespan,
         docs_url=None, redoc_url=None, openapi_url=None)
@@ -353,10 +358,18 @@ def create_app(services: Services | None = None):
     async def no_live_orders():
         raise HTTPException(403, "Real-money execution is deliberately absent from this release. No environment flag can enable it.")
 
+    # The old twelve-workspace prototype is preserved under /legacy.
+    # The new research-first interface uses the same protected API/session.
+    from .desk import register_desk
+    register_desk(app, s)
     app.mount("/assets", StaticFiles(directory=ROOT/"frontend"), name="assets")
 
     @app.get("/")
     async def index():
+        return FileResponse(ROOT/"frontend"/"desk.html")
+
+    @app.get("/legacy")
+    async def legacy():
         return FileResponse(ROOT/"frontend"/"index.html")
 
     return app
