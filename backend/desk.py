@@ -568,7 +568,12 @@ def register_desk(app: FastAPI, s) -> Desk:
                 return {"market": current, "history": [], "indexed": False}
             except ValueError:
                 raise HTTPException(404, "Market not indexed or available")
-        return {"market": {k: v for k, v in market.items() if k != "raw"},
+        safe_market = {k: v for k, v in market.items() if k != "raw"}
+        raw = market.get("raw") or {}
+        safe_market["rules"] = str(raw.get("rules_primary") or "") + "\n" + str(raw.get("rules_secondary") or "")
+        from .providers import normalize_market
+        safe_market["binary_supported"] = normalize_market(raw).get("binary_supported", False)
+        return {"market": safe_market,
                 "history": desk.catalog.dataset([ticker])[0]["bars"][-200:],
                 "indexed": True}
 
