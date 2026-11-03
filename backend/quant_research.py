@@ -30,6 +30,7 @@ def subtype(market: dict) -> tuple[str, str]:
     metadata = market.get("raw") or {}
     text = " ".join(str(x or "") for x in (
         market.get("title"), market.get("event_title"),
+        metadata.get("_series_title"), " ".join(str(t) for t in metadata.get("_series_tags", [])),
         metadata.get("series_title"), metadata.get("title"),
         metadata.get("subtitle"), metadata.get("yes_sub_title"),
         metadata.get("market_ticker"),
