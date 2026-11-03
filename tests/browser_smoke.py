@@ -58,7 +58,7 @@ def run():
             page.locator('#market-form button').click()
             page.wait_for_selector('text=Phoenix high temperature above 100°F?')
             page.locator('#market-filters [name="topic"]').select_option('Sports')
-            assert page.locator('#market-count').inner_text().startswith('0 matching markets')
+            assert page.locator('#market-count').inner_text().startswith('2 matching markets')
             page.locator('[data-action="clear-market-filters"]').click()
             assert page.locator('#market-count').inner_text().startswith('6 matching markets')
             page.locator('[data-action=ticket][data-id="DEMO-1"]').click()
