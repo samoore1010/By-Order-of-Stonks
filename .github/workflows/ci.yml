@@ -20,3 +20,5 @@ jobs:
       - run: node --check frontend/app.js
       - run: python -m playwright install --with-deps chromium
       - run: python tests/browser_smoke.py
+      - run: node --check frontend/desk.js
+      - run: python tests/browser_desk.py
