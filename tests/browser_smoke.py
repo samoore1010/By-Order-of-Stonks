@@ -51,6 +51,8 @@ def run():
             page.locator('#strategy-form [type=submit]').click()
             page.wait_for_selector('h3:has-text("Browser-tested strategy")')
             page.locator('nav [data-id="scanner"]').click()
+            # Explicitly opt into practice data; real Kalshi is now the default.
+            page.locator('#market-form [name="source"]').select_option('synthetic')
             page.locator('#market-form button').click()
             page.wait_for_selector('text=Phoenix high temperature above 100°F?')
             page.locator('[data-action=ticket][data-id="DEMO-1"]').click()
