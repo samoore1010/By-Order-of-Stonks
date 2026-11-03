@@ -250,6 +250,10 @@ def create_app(services: Services | None = None):
         safe = re.sub(r"[^a-zA-Z0-9_-]", "_", id)
         return Response(content, media_type=media, headers={"Content-Disposition": f'attachment; filename="{safe}.{format}"'})
 
+    @app.get("/api/kalshi/diagnostics")
+    async def kalshi_diagnostics():
+        return await s.kalshi.diagnostics()
+
     @app.get("/api/markets")
     async def markets(source: Literal["synthetic", "kalshi"] = "synthetic",
         series: str = Query(default="", pattern=r"^[A-Z0-9-]{0,80}$"), cursor: str = Query(default="", max_length=1000)):
