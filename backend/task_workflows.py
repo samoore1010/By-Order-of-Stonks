@@ -8,7 +8,8 @@ import asyncio
 import re
 import itertools
 import math
-from datetime import datetime
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from typing import Any
 
 from .domain_evidence import SportsEvidence, prop_spec, find_player, game_log_summary, text_key
@@ -91,6 +92,7 @@ async def locate_prop_markets(desk, event: dict, max_series=16) -> dict:
     series = unique[:max_series]
     failures, rows = [], []
     kickoff = datetime.fromisoformat(event["kickoff_utc"])
+    local_game_date = kickoff.astimezone(ZoneInfo("America/New_York")).strftime("%y%b%d").upper()
     for info in series:
         try:
             data = await desk.s.kalshi.get("/markets", {
@@ -100,15 +102,19 @@ async def locate_prop_markets(desk, event: dict, max_series=16) -> dict:
             for market in raw:
                 if not TICKER_PATTERN.fullmatch(str(market.get("ticker") or "")):
                     continue
-                # Retain only contracts within 36h of the verified event kickoff.
+                # Do not equate close_time with kickoff: Kalshi may allow a
+                # market to remain open for days after the game. The exact
+                # exchange event date is independently verified downstream.
                 closing = market.get("close_time") or market.get("expected_expiration_time")
-                if not closing:
-                    continue
-                try:
-                    delta = abs((datetime.fromisoformat(closing.replace("Z","+00:00"))-kickoff).total_seconds())
-                except ValueError:
-                    continue
-                if delta > 36*3600:
+                marker = local_game_date in str(market.get("event_ticker") or "").upper()
+                near_close = False
+                if closing:
+                    try:
+                        delta = (datetime.fromisoformat(closing.replace("Z","+00:00"))-kickoff).total_seconds()
+                        near_close = -36*3600 <= delta <= 7*86400
+                    except ValueError:
+                        pass
+                if not marker and not near_close:
                     continue
                 market = {**market, "_series_title":info["title"], "_category":info.get("category")}
                 rows.append(market)
@@ -144,6 +150,16 @@ async def match_verified_props(desk, raw: list[dict], game: dict,
             continue
         title = " ".join(str(m.get(k) or "") for k in
             ("title", "yes_sub_title", "_series_title"))
+        # Special protection, ladder and escalator formats have settlement
+        # mechanics this ordinary binary-prop model does not capture.
+        if re.search(r"\b(protected|escalator|ladder|head.to.head)\b",title,re.I):
+            skipped["unrecognized_prop"]+=1
+            continue
+        from .providers import normalize_market
+        normalized = normalize_market(m,m.get("_category") or "Sports")
+        if not normalized.get("binary_supported") or normalized.get("status") != "open":
+            skipped["unrecognized_prop"]+=1
+            continue
         spec = prop_spec(title)
         if not spec:
             skipped["unrecognized_prop"]+=1
@@ -160,6 +176,20 @@ async def match_verified_props(desk, raw: list[dict], game: dict,
                 ("title", "sub_title", "subtitle"))
             metadata = info.get("product_metadata") or {}
             supporting = event_text+" "+str(metadata)[:3000]
+            game_date = datetime.fromisoformat(game["kickoff_utc"]).astimezone(ZoneInfo("America/New_York"))
+            date_code = game_date.strftime("%y%b%d").upper()
+            pretty_date = game_date.strftime("%b %-d").lower() if hasattr(game_date, "strftime") else ""
+            close_raw=m.get("close_time") or ""
+            near_kickoff=False
+            try:
+                near_kickoff = abs((datetime.fromisoformat(close_raw.replace("Z","+00:00"))-datetime.fromisoformat(game["kickoff_utc"])).total_seconds()) <= 36*3600
+            except (ValueError,AttributeError):
+                pass
+            date_verified=(date_code in event_id.upper() or
+                           pretty_date in supporting.lower() or near_kickoff)
+            if not date_verified:
+                skipped["unverified_game_relation"]+=1
+                continue
             if _relation(supporting,game["teams"]):
                 relation = "verified"
             elif (_includes_player(event_text,player["name"]) and
