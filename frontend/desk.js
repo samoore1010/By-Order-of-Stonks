@@ -22,6 +22,7 @@ const state={tab:"explore",data:null,markets:[],marketCount:0,marketOffset:0,
   reportId:null,studyIndex:0,jobId:null,assistantHidden:window.innerWidth<1020};
 let busyMarkets=false;
 let toastTimer;
+const deskSession=(()=>{let saved=null;try{saved=window.sessionStorage?.getItem("stonks-research-session");}catch{}if(saved&&/^[A-Za-z0-9-]{8,80}$/.test(saved))return saved;const id=crypto.randomUUID();try{window.sessionStorage?.setItem("stonks-research-session",id);}catch{}return id;})();
 function toast(s,bad=false){let e=$("#toast");e.textContent=s;e.hidden=false;e.style.borderColor=bad?"#a25a5a":"#5a717c";clearTimeout(toastTimer);toastTimer=setTimeout(()=>e.hidden=true,8000);}
 async function api(path,body){
   const opts={method:body===undefined?"GET":"POST",headers:{"Content-Type":"application/json","X-Stonks-Request":"1"}};
@@ -83,9 +84,104 @@ function explore(){
     (state.marketOffset<state.marketCount?'<div class="form-actions">'+act("Load more","more")+'</div>':""))+
     notice("Market coverage is bounded, and historical quote candles do not prove that a trade could have been filled at the quoted price.");
 }
+function requirementsView(report){
+  const c=report.completion;
+  if(!c)return notice("Older report: no structured completion checks were saved. Treat findings as preliminary.");
+  const rows=(c.requirements||[]).map(r=>'<li><strong>'+
+    esc(r.status==="verified"?"✓ Verified: ":r.status==="partial"?"◐ Partial: ":"× Unmet: ")+
+    esc(r.label)+'</strong><small>'+esc(r.reason||"No independent supporting evidence")+
+    (r.evidence?.length?'<br>Evidence: '+esc(r.evidence.join(" · ")):"")+'</small></li>').join("");
+  return panel("Did the investigation answer your request?",
+    c.complete?"All required evidence checks were satisfied.":"Incomplete requests cannot be represented as trade recommendations or validated findings.",
+    '<div class="notice '+(c.complete?"":"warning")+'"><strong>'+
+      (c.complete?"Requirements verified":"This request has NOT been fulfilled")+
+      '</strong><br>'+esc(c.warning||"Review all underlying evidence before acting.")+'</div>'+
+    '<ul class="clean">'+rows+'</ul>');
+}
+function capabilityReport(r){
+  const constraints=r.plan?.constraints||r.constraints||{};
+  const event=r.verified_event;
+  const tr=r.trade_review||{};
+  const logs=tr.game_log_coverage||[];
+  const candidates=tr.candidate_legs||[];
+  const requested=constraints.requested_legs;
+  let html=head("RESEARCH / "+(r.task_type==="trade_construction"?"TRADE CONSTRUCTION":"EVENT INVESTIGATION"),
+    "Request requirements and verified evidence",
+    "The desk preserves your actual question. It will not replace an unmet trade-building request with an unrelated historical simulation.");
+  html+=panel("Your exact request","The investigation must retain the material requirements from your original question.",
+    '<h2>'+esc(r.question)+'</h2>'+
+    (r.task_type==="trade_construction"?'<div class="grid3" style="margin-top:18px">'+
+      metric("Requested trade legs",requested?String(requested):"Not specified","An exact market for every leg is required")+
+      metric("Desired joint probability",constraints.target_probability_min!=null?
+        pct(constraints.target_probability_min)+"–"+pct(constraints.target_probability_max):"Not specified",
+        "A calibrated correlation-aware model is required")+
+      metric("Historical lookback",constraints.lookback_games?
+        constraints.lookback_games+" games":"Not specified","Actual player game statistics required")+'</div>':''));
+  html+=panel("Verified event","Only provider-verified event or exchange identifiers are presented as fact.",
+    event?'<div class="notice"><strong>'+esc(event.title)+'</strong><br>'+
+      (event.kickoff_utc?'Kickoff: '+esc(when(event.kickoff_utc))+'<br>':'')+
+      (event.teams?.length?'Teams: '+esc(event.teams.map(t=>t.name).join(" vs "))+'<br>':'')+
+      '<a href="'+esc(safe(event.source))+'" target="_blank" rel="noopener noreferrer">Original event source</a></div>':
+      none("Event not verified","An authoritative, uniquely linked event identifier could not be established. Topic matches alone do not prove event identity."));
+  if(r.task_type==="trade_construction"){
+    html+=panel("Game-log evidence","Counts reflect actual completed games retrieved before the verified kickoff, not implied future win probabilities.",
+      logs.length?table(["Team","Requested","Verified","Provider"],
+        logs.map(x=>'<tr><td><strong>'+esc(x.team)+'</strong></td><td>'+
+          num(x.games_requested)+'</td><td>'+num(x.games_verified)+'</td><td>'+
+          (x.source?'<a href="'+esc(safe(x.source))+'" target="_blank" rel="noopener noreferrer">Data source</a>':"Unavailable")+'</td></tr>')):
+        none("No game logs verified","The event or source player statistics were unavailable."));
+    html+=panel("Potential contract candidates","An identified contract is NOT an endorsed trade leg. No unverified prop is added.",
+      candidates.length?table(["Verified player / market","Historical prop results","Current contract","Research status"],
+        candidates.map(x=>'<tr><td><strong>'+esc(x.player)+'</strong><small>'+
+          esc(x.stat?.source_text||"")+'</small></td><td>'+
+          num(x.last_games?.observed_games)+' / '+num(x.last_games?.requested_games)+' games'+
+          (x.last_games?.observed_frequency!=null?'<small>Past-game frequency '+pct(x.last_games.observed_frequency)+' (not calibrated)</small>':"")+
+          '</td><td><code>'+esc(x.ticker)+'</code></td><td>'+
+          esc(x.last_games?.status==="verified"?"Historical data present":"Incomplete logs")+'</td></tr>')):
+        none("No fully verified player-prop contracts","Without verified event-linked Kalshi markets, the system cannot claim that candidate trade legs exist."));
+    const structure=tr.proposed_legs||[];
+    html+=panel("Provisional trade structure",
+      "These are evidence-backed research candidates, NOT approved or executable trade legs.",
+      structure.length?table(["Player / condition","Observed recent frequency","Kalshi contract"],
+        structure.map(x=>'<tr><td><strong>'+esc(x.player)+'</strong><small>'+
+          esc(x.stat?.source_text||"")+'</small></td><td>'+pct(x.last_games?.observed_frequency)+
+          ' (descriptive, not predictive)</td><td><code>'+esc(x.ticker)+'</code></td></tr>')):
+        none("No verified leg structure","The exchange and statistical evidence were insufficient to select the requested number of legs."));
+    html+=panel("Joint probability and execution",
+      "A calculated scenario is not a calibrated forecast or an executable Kalshi combination.",
+      '<div class="metric-row">'+metric("Verified joint probability","Unavailable","A calibrated multivariate model is required")+
+      metric("Provisional legs",String(structure.length),"No real-money trade prepared")+
+      metric("Native Kalshi quote","Unavailable","RFQ integration not implemented")+'</div>'+
+      (tr.independence_scenario!=null?
+        '<div class="notice warning"><strong>Uncalibrated illustrative scenario only:</strong> '+
+        pct(tr.independence_scenario)+' under independence. Illustrative Frechet bounds: '+
+        pct(tr.frechet_scenario?.[0])+' to '+pct(tr.frechet_scenario?.[1])+'. '+
+        'These are not actual joint event probabilities or guaranteed quoted odds.</div>':'')+
+      '<p>'+esc(tr.scenario_warning||"No defensible combined outcome probability can be calculated from current evidence.")+'</p>');
+  } else {
+    html+=panel("Current Kalshi markets and evidence","Only the exchange records actually retrieved are shown. They are not recommendations or proven pricing errors.",
+      r.current_markets?.length?table(["Related market","YES ask","Volume","Relationship"],
+        r.current_markets.map(m=>'<tr><td><strong>'+esc(m.title||m.ticker)+'</strong><small>'+esc(m.ticker)+'</small></td><td>'+
+          (m.yes_ask!=null?(m.yes_ask*100).toFixed(1)+"¢":"No quote")+'</td><td>'+num(m.volume)+'</td><td>'+esc(m.verification||"Source record")+'</td></tr>')):
+        none("No linked markets verified","No currently available contracts could be connected to this event within the bounded search."));
+  }
+  html+=requirementsView(r);
+  if(r.external?.text){
+    html+=panel("External research context","Never treated as a substitute for verified event identity or quantitative probabilities.",
+      '<p>'+esc(r.external.text)+'</p>');
+  }
+  html+=panel("What can and cannot be concluded","A limitation is a blocker, not an invitation to invent an answer.",
+    '<p>'+esc(r.conclusion)+'</p><ul class="clean">'+(r.limitations||[]).map(x=>'<li>'+esc(x)+'</li>').join("")+'</ul>'+
+    (r.evidence?.length?'<details><summary>Provider documentation and evidence</summary><ul class="clean">'+
+      r.evidence.map(x=>'<li><a href="'+esc(safe(x.url))+'" target="_blank" rel="noopener noreferrer">'+
+      esc(x.title)+'</a></li>').join("")+'</ul></details>':"")+
+    '<div class="form-actions">'+act("Discuss missing evidence","discuss","",true)+act("New investigation","nav","explore")+'</div>');
+  return html;
+}
 function reportView(){
   const r=state.report;
   if(!r)return none("No report selected","Ask a question in Explore, or select a saved investigation.");
+  if(r.task_type==="trade_construction"||r.task_type==="event_analysis")return capabilityReport(r);
   const ac=r.acquisition||{},studies=r.studies||[],index=Math.min(state.studyIndex,studies.length-1),study=studies[Math.max(0,index)];
   let html='<div class="panel"><div class="eyebrow">'+esc(r.status)+'</div><h2 style="font-size:23px;margin:11px 0">'+esc(r.question)+'</h2><p>'+esc(r.conclusion)+'</p>'+
     '<div class="metric-row">'+metric("Settled markets found",num(ac.settled_market_count),"Bounded historical universe")+
@@ -122,6 +218,7 @@ function reportView(){
       (m.yes_ask==null?"No ask":(100*m.yes_ask).toFixed(1)+"¢")+'</td><td>'+
       num(m.volume)+'</td><td>'+act("Inspect paper ticket","ticket",m.ticker)+'</td></tr>')):
       none("No related current contracts found","The matching series may be entirely historical, or open contracts may be outside the bounded search."));
+  html+=requirementsView(r);
   const external=r.external||{},sources=[...(external.sources||[]),...(r.evidence||[])];
   html+=panel("Independent research and sources","External context is not used as historical point-in-time evidence.",
     notice(external.status==="retrieved"?"Web research retrieved.":"Web search unavailable or not requested; exchange evidence remains valid.")+
@@ -186,7 +283,7 @@ async function refresh(draw=true){
   if(job&&job.status==="completed"&&job.report_id){
     state.jobId=null;state.report=await api("/desk/reports/"+encodeURIComponent(job.report_id));
     state.reportId=state.report.id;state.studyIndex=0;
-    toast("Research completed; review the evidence.");tab("research");return;
+    toast(state.report.completion?.complete?"Research completed; review the evidence.":"Research report ready: some requested requirements remain unresolved.",!state.report.completion?.complete);tab("research");return;
   }
   if(job&&job.status==="failed"){state.jobId=null;toast("Research failed: "+(job.error||"Unknown error"),true);}
   if(draw)render();
@@ -215,7 +312,7 @@ async function researchJob(question,settings={}){
     max_markets:Number(settings.max_markets||60),include_web:true});
   state.jobId=job.id;
   assistant("user",question);
-  assistant("bot","Research queued. I will identify relevant Kalshi series, collect available archived contracts and price history, run comparable tests, and report data gaps. You do not need to import data.");
+  assistant("bot","Research queued. I will preserve your requirements, verify the relevant event and markets, use the appropriate evidence and analysis tools, then state explicitly which requirements were satisfied or blocked. No manual ticker import is needed.");
   toast("Research queued. Progress appears in Explore.");
   await refresh();return job;
 }
@@ -289,7 +386,7 @@ $("#assistant-form").addEventListener("submit",async e=>{
   assistant("user",message);
   const reply=assistant("bot","Working with the available research tools…");
   try{
-    const result=await api("/desk/chat",{message,report_id:state.tab==="research"?state.reportId:null});
+    const result=await api("/desk/chat",{message,report_id:state.tab==="research"?state.reportId:null,session_id:deskSession});
     reply.textContent=result.text||"Research queued.";
     if(result.job_id)state.jobId=result.job_id;
   }catch(err){reply.textContent=err.message;toast(err.message,true);}finally{button.disabled=false;}

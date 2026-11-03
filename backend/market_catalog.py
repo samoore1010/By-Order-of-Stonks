@@ -196,16 +196,31 @@ class MarketCatalog:
                 "coverage": "Bounded paginated scan, never claimed exhaustive"}
 
     def search_series(self, query: str, limit=12) -> list[dict]:
+        """Token-aware series discovery; 'NFL' must NOT match 'iNFLation'.
+
+        Multi-word queries require all substantive terms; mere substring
+        matches against short acronyms and irrelevant series are rejected.
+        """
         words = tokens(query)
         with self.engine.connect() as con:
             rows = [dict(r._mapping) for r in con.execute(select(self.series))]
         ranked = []
         for row in rows:
-            hay = " ".join([row["ticker"], row["title"], row["category"],
-                            " ".join(str(t) for t in (row["tags"] or []))]).lower()
-            score = sum(4 if t in row["title"].lower() else 2 if t in hay else 0 for t in words)
-            if (not words) or score:
-                ranked.append((score, row))
+            title = str(row["title"] or "").lower()
+            ticker = str(row["ticker"] or "").lower()
+            category = str(row["category"] or "").lower()
+            tags = " ".join(str(t) for t in (row["tags"] or [])).lower()
+            scores = []
+            for t in words:
+                exact = re.search(r"\b"+re.escape(t)+r"\b", title) is not None
+                in_tag = re.search(r"\b"+re.escape(t)+r"\b", tags) is not None
+                in_ticker = t in ticker
+                in_category = re.search(r"\b"+re.escape(t)+r"\b", category) is not None
+                score = (6 if exact else 4 if in_tag else 3 if in_category
+                         else 2 if in_ticker else 1 if len(t)>=5 and t in title else 0)
+                scores.append(score)
+            if not words or (scores and all(score>0 for score in scores)):
+                ranked.append((sum(scores), row))
         ranked.sort(key=lambda item: (-item[0], item[1]["title"]))
         return [{k: v for k, v in row.items() if k != "raw"} for _, row in ranked[:limit]]
 
