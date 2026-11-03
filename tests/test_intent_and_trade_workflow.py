@@ -216,3 +216,36 @@ def test_nfl_series_lookup_does_not_match_inflation(tmp_path):
     assert "KXCPIELECYOY" not in [x["ticker"] for x in results]
     assert "KXNFLWEEKTIE" in [x["ticker"] for x in results]
     assert [x["ticker"] for x in desk.catalog.search_series("passing yards")] == ["KXNFLPASSYDS"]
+
+
+class GenericKalshiFixture:
+    base="https://external-api.kalshi.com/trade-api/v2"
+    async def market(self,ticker):
+        return {"ticker":ticker,"event_id":"TEST-EVENT","status":"open"}
+    async def get(self,path,params=None):
+        if path=="/events/TEST-EVENT":
+            return {"event":{"title":"Fixture: a verified non-sports exchange event"}}
+        if path=="/markets":
+            return {"markets":[{
+                "ticker":f"TEST-{i}","event_ticker":"TEST-EVENT",
+                "title":f"Fixture outcome {i}","status":"open",
+                "notional_value_dollars":"1.0000",
+                "yes_bid_dollars":"0.3000","yes_ask_dollars":"0.3400",
+                "volume_fp":"500"
+            } for i in range(1,4)]}
+        raise AssertionError(f"Unexpected Kalshi route {path}")
+
+
+def test_generic_combo_uses_exact_exchange_event_and_blocks_joint_compatibility(tmp_path):
+    from backend.task_workflows import trade_construction
+    desk=Desk(Services(Store("sqlite:///"+str(tmp_path/"generic_combo.db"))))
+    desk.s.kalshi=GenericKalshiFixture()
+    plan=classify("Build a 3-leg combination from ticker:TEST-1 aiming for 45%-60%")
+    job=desk.enqueue(ResearchInput(question=plan.query,include_web=False))
+    report=asyncio.run(trade_construction(desk,job["id"],plan))
+    assert report["verified_event"]["id"]=="TEST-EVENT"
+    assert len(report["trade_review"]["candidate_legs"])==3
+    assert report["trade_review"]["proposed_legs"]==[]
+    assert report["trade_review"]["joint_probability"] is None
+    assert report["completion"]["status"]=="incomplete"
+    assert report["studies"]==[]
