@@ -139,7 +139,9 @@ def test_four_candidate_legs_are_not_misrepresented_as_verified_combo(tmp_path):
     assert result["status"]=="incomplete"
     assert result["verified_event"]["id"]=="12345"
     assert len(result["trade_review"]["candidate_legs"])==4
-    assert result["trade_review"]["proposed_legs"]==[]
+    assert len(result["trade_review"]["proposed_legs"])==4
+    assert result["trade_review"]["independence_scenario"] is not None
+    assert result["trade_review"]["frechet_scenario"] is not None
     assert result["trade_review"]["joint_probability"] is None
     assert not result["completion"]["complete"]
     assert result["studies"]==[]
