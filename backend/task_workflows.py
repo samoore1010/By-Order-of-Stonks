@@ -118,11 +118,17 @@ async def locate_prop_markets(desk, event: dict, max_series=10) -> dict:
 
 async def match_verified_props(desk, raw: list[dict], game: dict,
                                player_data: list[dict]) -> dict:
-    """Verify current contract details and actual linked event; never invent legs."""
+    """Verify original exchange identifiers and player identity.
+
+    Fully verified event relationships need BOTH teams. An event listing only a
+    verified player and no matchup can be retained provisionally, never
+    promoted to a verified combo or executable quote.
+    """
     matched = []
     skipped = {"unrecognized_prop": 0, "unverified_game_relation": 0,
                "unidentified_player": 0, "unavailable_market": 0}
     seen = set()
+    athletes = [p for team in player_data for p in team.get("players",[])]
     for m in raw[:180]:
         ticker = m["ticker"]
         if ticker in seen:
@@ -138,40 +144,45 @@ async def match_verified_props(desk, raw: list[dict], game: dict,
         if not spec:
             skipped["unrecognized_prop"]+=1
             continue
-        try:
-            event = await desk.s.kalshi.get("/events/"+event_id)
-            info = event.get("event") or {}
-            event_text = " ".join(str(info.get(k) or "") for k in
-                ("title", "sub_title", "subtitle"))
-            # No independent proof the event matches both teams => reject it.
-            if not _relation(event_text, game["teams"]):
-                skipped["unverified_game_relation"]+=1
-                continue
-        except ValueError:
-            skipped["unavailable_market"]+=1
-            continue
-        athletes = [p for team in player_data for p in team.get("players",[])]
         candidates = [p for p in athletes if _includes_player(title,p.get("name",""))]
         player = candidates[0] if len(candidates)==1 else None
         if player is None:
             skipped["unidentified_player"]+=1
             continue
-        # No auto-betting. This is only a candidate with provable contract identity.
+        try:
+            response = await desk.s.kalshi.get("/events/"+event_id)
+            info = response.get("event") or {}
+            event_text = " ".join(str(info.get(k) or "") for k in
+                ("title", "sub_title", "subtitle"))
+            metadata = info.get("product_metadata") or {}
+            supporting = event_text+" "+str(metadata)[:3000]
+            if _relation(supporting,game["teams"]):
+                relation = "verified"
+            elif (_includes_player(event_text,player["name"]) and
+                  not re.search(r"\b(?:vs?\.?|versus|at)\b",event_text,re.I)):
+                relation = "provisional"
+            else:
+                skipped["unverified_game_relation"]+=1
+                continue
+        except ValueError:
+            skipped["unavailable_market"]+=1
+            continue
         matched.append({
             "ticker": ticker, "title": title, "event_ticker": event_id,
-            "exchange_event_title": event_text, "player": player.get("name"),
-            "player_id": player["id"], "team_id": player["team_id"],
-            "stat": spec, "yes_bid": m.get("yes_bid_dollars"),
+            "exchange_event_title": event_text, "relation_status": relation,
+            "player": player.get("name"), "player_id": player["id"],
+            "team_id": player["team_id"], "stat": spec,
+            "yes_bid": m.get("yes_bid_dollars"),
             "yes_ask": m.get("yes_ask_dollars"),
             "volume": m.get("volume_fp"),
-            "evidence": [f"https://kalshi.com/markets/{ticker}",
-                         game["source"]],
+            "evidence": [desk.s.kalshi.base+"/markets/"+ticker,game["source"]] if
+                hasattr(desk.s.kalshi,"base") else [game["source"]],
             "raw": m,
         })
         if len(matched) >= 20:
             break
     return {"candidates": matched, "skipped": skipped,
-            "warning": "Verified exchange event and player identity required; partial search cannot establish unavailability."}
+            "warning": "Provisional player+date matches are not verified matchups. Only provider evidence showing both teams qualifies as a fully verified event relationship."}
 
 
 async def trade_construction(desk, job_id: str, plan: ResearchPlan,
@@ -252,8 +263,9 @@ async def trade_construction(desk, job_id: str, plan: ResearchPlan,
             trade_legs = match["candidates"]
             warnings.append("Not all contract types and event formats are parsable. See skipped diagnostics.")
             obs["eligible_contracts"] = _state(
-                "verified" if trade_legs else "blocked",
-                "Only player-prop markets linked to the verified fixture and player name are eligible."
+                "verified" if trade_legs and all(x["relation_status"]=="verified" for x in trade_legs) else
+                "partial" if trade_legs else "blocked",
+                "Contracts linked to both verified teams are independently confirmed; player-only matches remain provisional."
                 if trade_legs else "No sufficiently verified current player-prop contract found in bounded scope.",
                 *[x["ticker"] for x in trade_legs[:10]])
             obs["market_identification"] = _state(
@@ -270,7 +282,7 @@ async def trade_construction(desk, job_id: str, plan: ResearchPlan,
     qualified = [m for m in trade_legs if m.get("last_games",{}).get("status") == "verified"]
     draft=structure_candidates(qualified,required_count,c.target_probability_min,c.target_probability_max)
     if required_count:
-        obs["requested_legs"] = _state("verified" if len(draft["legs"]) == required_count else "blocked",
+        obs["requested_legs"] = _state("verified" if len(draft["legs"]) == required_count and all(x["relation_status"]=="verified" for x in draft["legs"]) else "partial" if len(draft["legs"]) == required_count else "blocked",
             f"Selected {len(draft['legs'])} provisional research legs from {len(qualified)} evidence-backed candidates; requested {required_count}. "
             "No recommendation or native executable combo is implied.",
             *[m["ticker"] for m in draft["legs"]])
