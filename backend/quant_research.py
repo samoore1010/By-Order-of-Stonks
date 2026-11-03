@@ -159,7 +159,7 @@ def simulate(rows: list[dict], model="buy_yes", capital=10000,
              min_price=0., max_price=1., stake_pct=.01,
              event_cap_pct=.05, portfolio_cap_pct=.30,
              fee_coefficient=.07, slippage=.005,
-             participation=.05) -> dict:
+             participation=.05, min_volume=0) -> dict:
     if model not in MODELS:
         raise ValueError("Unsupported historical trading rule")
     if not (100 <= capital <= 10_000_000 and 0 < stake_pct <= event_cap_pct <= portfolio_cap_pct <= 1):
@@ -168,7 +168,7 @@ def simulate(rows: list[dict], model="buy_yes", capital=10000,
         raise ValueError("Invalid execution assumptions")
     events = []
     for r in rows:
-        if choose(r, model, min_price, max_price):
+        if r["volume"] >= min_volume and choose(r, model, min_price, max_price):
             events.append((r["available_at"], 1, r))
             events.append((r["settled_at"], 0, r))
     events.sort(key=lambda e: (e[0], e[1], e[2]["ticker"]))
@@ -258,8 +258,9 @@ def simulate(rows: list[dict], model="buy_yes", capital=10000,
 
 
 def study(markets: list[dict], model="against_longshots", compare_by="market_type",
-          days_before=2, capital=10000, min_price=0., max_price=1.) -> dict:
-    rows = samples(markets, days_before=days_before)
+          days_before=2, capital=10000, min_price=0., max_price=1., min_volume=0.) -> dict:
+    rows = [r for r in samples(markets, days_before=days_before)
+            if r["volume"] >= min_volume and min_price <= r["yes_ask"] <= max_price]
     if not rows:
         return {
             "status": "insufficient_data", "observations": 0,
@@ -276,7 +277,8 @@ def study(markets: list[dict], model="against_longshots", compare_by="market_typ
     summaries = []
     for group, values in sorted(groups.items(), key=lambda kv: -len(kv[1])):
         cal = calibration(values)
-        perf = simulate(values, model=model, capital=capital, min_price=min_price, max_price=max_price)
+        perf = simulate(values, model=model, capital=capital, min_price=min_price,
+                        max_price=max_price, min_volume=min_volume)
         summaries.append({
             "group": group,
             "classification": sorted({r["type_provenance"] for r in values}),
@@ -287,12 +289,14 @@ def study(markets: list[dict], model="against_longshots", compare_by="market_typ
             "quality": "limited" if cal["events"] < MIN_EVENTS_FOR_INFERENCE else "descriptive",
         })
     overall_cal = calibration(rows)
-    overall_sim = simulate(rows, model=model, capital=capital, min_price=min_price, max_price=max_price)
+    overall_sim = simulate(rows, model=model, capital=capital, min_price=min_price,
+                           max_price=max_price, min_volume=min_volume)
     return {
         "status": "descriptive" if overall_cal["events"] >= MIN_EVENTS_FOR_INFERENCE else "limited_sample",
         "observations": len(rows),
         "independent_event_ids": overall_cal["events"],
         "model": model,
+        "price_band": [min_price, max_price], "minimum_observed_volume": min_volume,
         "strategy_description": MODELS[model],
         "entry_rule": f"Latest daily candle no later than {days_before} day(s) before settlement, max 72h staleness",
         "compare_by": compare_by,
