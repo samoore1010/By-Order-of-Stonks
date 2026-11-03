@@ -39,6 +39,7 @@ class ResearchInput(Strict):
 class ConversationInput(Strict):
     message: str = Field(min_length=1, max_length=2000)
     report_id: str | None = Field(default=None, max_length=100)
+    session_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9-]{8,80}$")
 
 
 class MarketSearch(Strict):
@@ -684,9 +685,27 @@ def register_desk(app: FastAPI, s) -> Desk:
                 return {"mode": "research_revised", "job_id": job["id"],
                         "text": "Updated investigation started. Earlier requirements are retained unless explicitly changed. Previous evidence remains saved; no trade is being placed."}
             return await desk.interpret_report(request.message, report)
-        job = desk.enqueue(ResearchInput(question=request.message))
+        session_key = "desk-conversation-"+request.session_id if request.session_id else None
+        previous = s.store.get(session_key) if session_key else None
+        full_question = ((previous.get("question", "")+"\nUpdated requirement: "+request.message)
+                         if previous and previous.get("question") else request.message)
+        intent = classify(full_question)
+        if intent.intent == "trade_construction":
+            if intent.constraints.requested_legs is None:
+                if session_key:
+                    s.store.write("desk_conversation", {"question":full_question}, session_key)
+                return {"mode":"clarification","text":"How many legs should the combination contain? I will keep the rest of your request.",
+                        "missing":"requested_legs"}
+            if intent.constraints.event_date is None and not intent.constraints.exact_ticker:
+                if session_key:
+                    s.store.write("desk_conversation", {"question":full_question}, session_key)
+                return {"mode":"clarification","text":"Which event or date should the combination be for? You can name the matchup or provide the date.",
+                        "missing":"verified_event"}
+        if session_key and previous:
+            s.store.write("desk_conversation", {"question":None}, session_key)
+        job = desk.enqueue(ResearchInput(question=full_question))
         return {"mode": "research_started", "job_id": job["id"],
-                "text": "Investigation queued. The request will be classified and routed to relevant research tools. The final report will identify unmet requirements; no unsupported trade or numeric claim will be substituted."}
+                "text": "Investigation queued with your complete request and constraints. The report will identify verified evidence and unmet requirements, without substituting an unrelated study."}
 
     @app.post("/api/desk/paper")
     async def desk_paper(request: PaperTicket):
