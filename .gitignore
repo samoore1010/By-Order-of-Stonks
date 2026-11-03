@@ -1,0 +1,15 @@
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+data/
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+artifacts/
+*.db
+*.db-*
+.DS_Store

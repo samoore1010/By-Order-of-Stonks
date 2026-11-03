@@ -1,0 +1,22 @@
+name: Workbench checks
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    # Pin a supported Playwright host instead of following ubuntu-latest upgrades.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+      - run: pip install -r requirements-dev.txt
+      - run: python -m pytest -q
+      - run: node --check frontend/app.js
+      - run: python -m playwright install --with-deps chromium
+      - run: python tests/browser_smoke.py
