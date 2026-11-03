@@ -6,6 +6,8 @@ missing sources, absent offers and uncalibrated joint odds are blocking defects.
 from __future__ import annotations
 import asyncio
 import re
+import itertools
+import math
 from datetime import datetime
 from typing import Any
 
@@ -28,6 +30,39 @@ def _relation(text: str, teams: list[dict]) -> bool:
         names.append([team.get("name","").lower(), team.get("abbreviation","").lower()])
     return all(any(x and re.search(r"\b"+re.escape(x)+r"\b", text) for x in group)
                for group in names)
+
+
+def structure_candidates(candidates: list[dict], count: int | None,
+                         target_low: float | None, target_high: float | None) -> dict:
+    """Provisional selection only. Empirical frequencies are NOT predicted probabilities."""
+    if not count or count < 2:
+        return {"legs":[], "independence_scenario":None, "frechet_scenario":None}
+    eligible = [c for c in candidates if c.get("last_games",{}).get("status") == "verified"
+                and c.get("last_games",{}).get("observed_frequency") is not None]
+    if len(eligible) < count:
+        return {"legs":[], "independence_scenario":None, "frechet_scenario":None}
+    mid = (target_low+target_high)/2 if target_low is not None and target_high is not None else .50
+    best = None
+    for group in itertools.islice(itertools.combinations(eligible[:20], count), 6000):
+        names = [(x["player_id"],x["stat"]["stat"]) for x in group]
+        if len(set(names)) != len(names):
+            continue
+        rates = [x["last_games"]["observed_frequency"] for x in group]
+        independence = math.prod(rates)
+        score = abs(independence-mid)
+        # Prefer both teams represented where the other criteria tie.
+        score += .0001 if len({x["team_id"] for x in group})==1 else 0
+        if best is None or score < best[0]:
+            best = (score, group, rates, independence)
+    if best is None:
+        return {"legs":[], "independence_scenario":None, "frechet_scenario":None}
+    _, group, rates, independent = best
+    lower = max(0.,sum(rates)-len(rates)+1)
+    upper = min(rates)
+    return {"legs":[{k:v for k,v in leg.items() if k!="raw"} for leg in group],
+            "independence_scenario":round(independent,5),
+            "frechet_scenario":[round(lower,5),round(upper,5)],
+            "warning":"Illustrative calculation using observed seven-game frequencies as if they were true marginals. They are NOT calibrated probabilities; independence is unverified and these bounds are NOT a validated range for the upcoming game."}
 
 
 def _includes_player(title: str, name: str) -> bool:
@@ -147,7 +182,7 @@ async def trade_construction(desk, job_id: str, plan: ResearchPlan,
     obs: dict[str,dict] = {}
     sources, warnings, logs, trade_legs = [], [], [], []
     event, universe = None, None
-    obs["source_provenance"] = _state("verified", "The exchange and adapter source identities are recorded.",
+    obs["source_provenance"] = _state("partial", "Source documentation alone is not evidence that the actual requested data were obtained.",
                                       "https://docs.kalshi.com/api-reference/market/get-markets")
     obs["request_completion"] = _state("blocked", "Trading request must satisfy all explicit requirements.")
     desk.event(job_id, "Task planning",
@@ -166,6 +201,7 @@ async def trade_construction(desk, job_id: str, plan: ResearchPlan,
             event = verified["game"]
             obs["verified_event"] = _state("verified", "Teams and kickoff verified in provider event record.",
                                             event["source"], "provider_event:"+event["id"])
+            obs["source_provenance"] = _state("verified", "An event source and original identifier were retrieved.",event["source"])
         else:
             obs["verified_event"] = _state("blocked",verified.get("note", "Cannot uniquely identify event"))
     else:
@@ -232,17 +268,22 @@ async def trade_construction(desk, job_id: str, plan: ResearchPlan,
         obs["market_identification"] = _state("blocked", "Cannot identify tradable contracts without the event.")
     required_count = c.requested_legs
     qualified = [m for m in trade_legs if m.get("last_games",{}).get("status") == "verified"]
+    draft=structure_candidates(qualified,required_count,c.target_probability_min,c.target_probability_max)
     if required_count:
-        obs["requested_legs"] = _state("verified" if len(qualified) >= required_count else "blocked",
-            f"Identified {len(qualified)} evidence-backed candidates; requested {required_count}. "
-            "Candidates are not a selected trade until independent outcome estimates are available.",
-            *[m["ticker"] for m in qualified[:required_count]])
+        obs["requested_legs"] = _state("verified" if len(draft["legs"]) == required_count else "blocked",
+            f"Selected {len(draft['legs'])} provisional research legs from {len(qualified)} evidence-backed candidates; requested {required_count}. "
+            "No recommendation or native executable combo is implied.",
+            *[m["ticker"] for m in draft["legs"]])
     else:
         obs["requested_legs"] = _state("blocked", "Required exact number of legs was not specified.")
-    obs["probability_estimates"] = _state("blocked",
-        "Last-game outcome frequencies are descriptive and cannot be treated as calibrated forward marginal probabilities.")
-    obs["joint_probability"] = _state("blocked",
-        "No verified multivariate joint model or observed Kalshi native combo quote was available. Multiplying prop rates would falsely assume independence.")
+    if draft["legs"] and all(x.get("last_games",{}).get("status")=="verified" for x in draft["legs"]):
+        obs["player_game_logs"]=_state("verified",
+            "Each selected player's specified last-game sample was retrieved with original provider metrics.",
+            *[x["ticker"] for x in draft["legs"]])
+    obs["probability_estimates"] = _state("partial" if draft["legs"] else "blocked",
+        "Observed past-game frequencies are descriptive and NOT calibrated forward marginal probabilities.")
+    obs["joint_probability"] = _state("partial" if draft["legs"] else "blocked",
+        "Illustrative independence and Fréchet scenarios can be shown, but no verified multivariate joint model or observed native combo quote is available.")
     obs["exchange_execution_status"] = _state("blocked",
         "Kalshi's multivariate RFQ execution has not been implemented or verified. A set of single-leg orders is not an atomic combo.")
     if c.target_probability_min is not None:
@@ -262,9 +303,12 @@ async def trade_construction(desk, job_id: str, plan: ResearchPlan,
         "trade_review":{
             "requested_legs": c.requested_legs,
             "candidate_legs": qualified[:20],
-            "proposed_legs": [], # No unsound combination pretending to meet requested probability.
+            "proposed_legs": draft["legs"], # Research scenario only, never a validated execution ticket.
             "requested_probability_range":[c.target_probability_min,c.target_probability_max],
             "joint_probability":None, "model":"not_calibrated",
+            "independence_scenario":draft.get("independence_scenario"),
+            "frechet_scenario":draft.get("frechet_scenario"),
+            "scenario_warning":draft.get("warning"),
             "native_combo_quote":None, "execution_status":"not_available",
             "game_log_coverage":logs,
             "market_scan": {k:v for k,v in (universe or {}).items() if k not in ("markets",)},
