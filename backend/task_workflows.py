@@ -307,11 +307,16 @@ async def trade_construction(desk, job_id: str, plan: ResearchPlan,
         if item not in obs:
             obs[item] = _state("blocked","No verified evidence recorded.")
     gates = completion(plan,obs)
+    # Player-level source records can be large. Persist the verified event identity
+    # and only the exact reviewed players' statistics, not an entire team roster.
+    public_event = ({**event, "teams":[
+        {k:v for k,v in team.items() if k not in ("player_data","previous_games")}
+        for team in event["teams"]]} if event else None)
     return desk.s.store.write("desk_report", {
         "task_type": plan.intent, "question": plan.query,
         "origin":"user", "status":"incomplete",
         "plan":plan.model_dump(), "completion":gates,
-        "verified_event":event,
+        "verified_event":public_event,
         "trade_review":{
             "requested_legs": c.requested_legs,
             "candidate_legs": qualified[:20],
