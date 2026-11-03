@@ -89,6 +89,33 @@ def run():
             "yes_bid_dollars": ".3800", "yes_ask_dollars": ".4000",
             "volume_fp": "3000"
         }], "test fixture")
+        service.store.write("desk_report", {
+            "task_type":"trade_construction",
+            "question":"Four-leg test fixture combo using seven games at 45%-60%",
+            "origin":"test_fixture","status":"incomplete",
+            "market_count":0,"selected_series":[],"current_markets":[],
+            "acquisition":{"contracts_with_candles":0,"settled_market_count":0,
+                           "candles_loaded":0,"partial_universe":True},
+            "studies":[],"external":{"status":"not_used","text":"","sources":[]},
+            "plan":{"constraints":{"requested_legs":4,
+                                  "target_probability_min":.45,
+                                  "target_probability_max":.60,
+                                  "lookback_games":7}},
+            "completion":{"complete":False,"status":"incomplete",
+                          "warning":"Research task not fulfilled",
+                          "requirements":[{"id":"joint_probability",
+                                           "label":"Joint probability",
+                                           "status":"blocked",
+                                           "reason":"No calibrated model available",
+                                           "evidence":[]}]},
+            "verified_event":None,
+            "trade_review":{"candidate_legs":[],"proposed_legs":[],
+                            "game_log_coverage":[],
+                            "joint_probability":None,
+                            "native_combo_quote":None},
+            "limitations":["No verified event or native combo quotation"],
+            "evidence":[],"conclusion":"Cannot verify the specified combination."
+        })
         with TestClient(app) as client, sync_playwright() as p:
             browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
             page = browser.new_page(viewport={"width": 1500, "height": 970})
@@ -116,6 +143,10 @@ def run():
             assert page.locator('text=Mock current contract').count() > 0
             page.locator('button[data-nav="research"]').click()
             page.wait_for_selector('h1:has-text("Your investigations")')
+            page.locator('[data-action="report"]:has-text("Four-leg test fixture combo")').click()
+            page.wait_for_selector('h1:has-text("Request requirements and verified evidence")')
+            assert page.locator('text=This request has NOT been fulfilled').count() > 0
+            assert page.locator('text=Historical comparison').count() == 0
             page.locator('button[data-nav="trade"]').click()
             page.wait_for_selector('h1:has-text("Simulate a real-market position")')
             page.locator('button[data-nav="explore"]').click()
