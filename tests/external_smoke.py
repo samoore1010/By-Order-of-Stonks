@@ -28,6 +28,8 @@ async def run():
             targeted=[x for x in data.get("series",[]) if
                       re.search(r"player|passing yards|receiving yards|rushing yards|receptions",str(x.get("title","")),re.I)
                       and str(x.get("category","")).lower()=="sports"]
+            priority={"KXNFLRECYDS","KXNFLPASSYDS","KXNFLRUSHYDS","KXNFLRECS"}
+            targeted.sort(key=lambda x:(0 if x.get("ticker") in priority else 1 if "Pro Football" in str(x.get("title")) else 2,str(x.get("title"))))
             print("Player-related sports series:",[{k:x.get(k) for k in ("ticker","title")} for x in targeted[:22]])
             for series in targeted[:12]:
                 resp=await c.get("https://external-api.kalshi.com/trade-api/v2/markets",
