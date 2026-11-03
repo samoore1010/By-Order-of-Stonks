@@ -320,6 +320,8 @@ class MarketCatalog:
                         m = dict(item)
                         m["series_ticker"] = ticker
                         m["_category"] = s.get("category", "Other")
+                        m["_series_title"] = s.get("title", "")
+                        m["_series_tags"] = s.get("tags") or []
                         found.append(m)
                         fetched_for_series += 1
                         if len(found) >= max_markets or fetched_for_series >= per_series:
