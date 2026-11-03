@@ -19,6 +19,8 @@ from pydantic import Field
 from .models import Strict, now, PaperOrder
 from .market_catalog import MarketCatalog, tokens, TICKER_PATTERN
 from .quant_research import study, MODELS
+from .research_intent import classify, completion
+from .task_workflows import trade_construction, event_investigation
 
 
 class ResearchInput(Strict):
@@ -251,6 +253,14 @@ class Desk:
     async def run_research(self, job_id: str):
         job = self.s.store.get(job_id)
         request = ResearchInput.model_validate(job["request"])
+        intent = classify(request.question)
+        self.event(job_id, "Request validation",
+                   f"Task: {intent.intent}. Required evidence: {', '.join(intent.required)}. "
+                   f"Constraints: {intent.constraints.model_dump(exclude_none=True)}")
+        if intent.intent == "trade_construction":
+            return await trade_construction(self, job_id, intent)
+        if intent.intent == "event_analysis":
+            return await event_investigation(self, job_id, intent)
         self.event(job_id, "Market intelligence", "Checking indexed series and current market coverage.")
         try:
             await self.ensure_index()
@@ -358,7 +368,34 @@ class Desk:
         if request.include_web and job["origin"] != "scheduled":
             self.event(job_id, "External context", "Checking independent public evidence when provider access is available.")
             ext = await self.external_research(request.question)
+        evidence_gates = {
+            "source_provenance": {"status": "verified", "evidence": ["Kalshi REST market and candle endpoints"],
+                                  "reason": "Provider source and collection provenance are recorded."},
+            "market_identification": {"status": "verified" if selected_series else "blocked",
+                                      "evidence": [x["ticker"] for x in selected_series[:8]],
+                                      "reason": "Actual exchange series identifiers were selected."},
+            "historical_samples": {"status": "verified" if max_valid >= 30 else "partial",
+                                    "evidence": [m["ticker"] for m in historic["markets"][:8]],
+                                    "reason": f"{max_valid} distinct event IDs with eligible historical quotes."},
+            "consistent_rules": {"status": "verified" if experiments else "blocked",
+                                  "evidence": [x["model"] for x in experiments],
+                                  "reason": "Multiple rules were evaluated on the same collected historical universe."},
+            "reproducible_metrics": {"status": "verified" if max_valid > 0 else "blocked",
+                                     "evidence": ["Deterministic quant_research.study"],
+                                     "reason": "A reproducible numerical experiment was completed."},
+            "market_coverage": {"status": "partial",
+                                "reason": "Only a capped subset of related series and archived contracts was retrieved."},
+            "testable_hypothesis": {"status": "verified" if experiments and selected_series else "blocked",
+                                    "evidence": [x["model"] for x in experiments],
+                                    "reason": "Concrete baseline hypotheses were tested; no independent predictive edge established."},
+            "request_completion": {"status": "blocked",
+                                   "reason": "Descriptive results do not establish a validated tradable edge or comprehensive coverage."},
+        }
+        evidence_check = completion(intent, evidence_gates)
         report = self.s.store.write("desk_report", {
+            "task_type": intent.intent,
+            "completion": evidence_check,
+            "constraints": intent.constraints.model_dump(exclude_none=True),
             "question": request.question, "origin": job["origin"],
             "status": ("limited_evidence" if max_valid < 30 else "descriptive_analysis"),
             "plan": plan,
