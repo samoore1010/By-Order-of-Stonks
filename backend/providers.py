@@ -104,7 +104,11 @@ class Kalshi:
         async with httpx.AsyncClient(timeout=20, follow_redirects=False) as client:
             for attempt in range(3):
                 try:
-                    r = await client.get(self.base+path, params=params, headers=self.headers(path))
+                    # Public market/history routes must not depend on the account key.
+                    # A malformed or unauthorized key must not block public research.
+                    headers = self.headers(path) if path.startswith("/portfolio/") else {
+                        "Accept": "application/json", "User-Agent": "ByOrderOfStonks/0.1"}
+                    r = await client.get(self.base+path, params=params, headers=headers)
                 except httpx.RequestError as exc:
                     raise ValueError("Kalshi could not be reached. No sample data substituted.") from exc
                 if r.status_code in (429, 502, 503, 504) and attempt < 2:
@@ -114,6 +118,30 @@ class Kalshi:
                     raise ValueError(f"Kalshi returned HTTP {r.status_code}. Check permissions, ticker, and availability.")
                 return r.json()
         raise ValueError("Kalshi retry budget exhausted")
+
+    async def diagnostics(self) -> dict:
+        """Test public market access independently of private account credentials.
+
+        Never return key material or account balances to the caller.
+        """
+        result = {"environment": self.environment,
+                  "credentials_configured": bool(self.key_id and self.key),
+                  "public_markets": {"ok": False},
+                  "private_account": {"ok": False, "status": "not_configured"}}
+        try:
+            data = await self.get("/markets", {"limit": 1, "status": "open"})
+            result["public_markets"] = {"ok": isinstance(data.get("markets"), list),
+                                        "returned_markets": len(data.get("markets", []))}
+        except (ValueError, KeyError, TypeError) as exc:
+            result["public_markets"] = {"ok": False, "error": str(exc)[:250]}
+        if self.key_id and self.key:
+            try:
+                await self.get("/portfolio/balance")
+                result["private_account"] = {"ok": True, "status": "authenticated"}
+            except (ValueError, KeyError, TypeError) as exc:
+                result["private_account"] = {"ok": False, "status": "authentication_failed",
+                                             "error": str(exc)[:250]}
+        return result
 
     async def markets(self, series: str = "", cursor: str = "") -> dict:
         params = {"limit": 100, "status": "open", "mve_filter": "exclude"}
