@@ -175,3 +175,21 @@ def test_market_subtypes_use_source_series_metadata():
         "Player performance", "Margin / spread", "Match winner"
     }
     assert all(v["type_provenance"] == "inferred" for v in values)
+
+
+def test_autonomous_research_is_bounded_to_one_job_per_day(tmp_path, monkeypatch):
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("DESK_AUTONOMOUS_ENABLED", "true")
+    desk = make_desk(tmp_path)
+    desk.catalog.put_series([{"ticker": "TEST", "title": "Real-series metadata fixture",
+                              "category": "Other"}])
+    desk.catalog.put_markets([{"ticker": "TEST-OPEN-1", "event_ticker": "TEST-OPEN",
+        "series_ticker": "TEST", "status": "open", "title": "Contract",
+        "volume_fp": "1000", "notional_value_dollars": "1.0000",
+        "yes_bid_dollars": "0.4000", "yes_ask_dollars": "0.4200"}], "mock")
+    desk.maybe_schedule_autonomous()
+    desk.maybe_schedule_autonomous()
+    jobs = desk.s.store.list("desk_job")
+    assert len(jobs) == 1
+    assert jobs[0]["origin"] == "scheduled"
+    assert jobs[0]["request"]["include_web"] is False
