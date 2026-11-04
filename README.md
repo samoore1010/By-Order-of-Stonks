@@ -1,5 +1,24 @@
 # By Order of Stonks
 
+## Capability-aware research upgrade (new branch)
+
+The research desk now distinguishes market investigations, historical comparisons,
+event-specific questions and multi-leg trade construction. It preserves user
+constraints, checks original source records, verifies supported sporting events,
+and **refuses to present an unrelated generic backtest as an answer**.
+
+See [capability-based research architecture](docs/CAPABILITY_RESEARCH.md) for
+request planning, official exchange evidence, bounded sports player game logs,
+provisional multi-leg structures and the evidence required before any joint
+probability or execution claim can be certified.
+
+**The current stage is experimental.** Real-money execution and native
+combination RFQs remain disabled. Broad market analysis is supported, but
+unavailable correlation models, incomplete historical coverage or unsupported
+providers will be identified as unfulfilled requirements rather than guessed.
+
+
+
 ## Research-first market intelligence desk
 
 This branch rebuilds the project around one workflow: **ask a question, find

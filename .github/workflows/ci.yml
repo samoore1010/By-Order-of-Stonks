@@ -22,3 +22,6 @@ jobs:
       - run: python tests/browser_smoke.py
       - run: node --check frontend/desk.js
       - run: python tests/browser_desk.py
+      - name: Public-provider read-only compatibility check
+        continue-on-error: true
+        run: python tests/external_smoke.py
